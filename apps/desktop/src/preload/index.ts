@@ -4,6 +4,7 @@ import { IPC, type DesktopApi } from '../shared/ipc/contracts';
 const api: DesktopApi = {
   updates:action=>ipcRenderer.invoke(IPC.updates,action),
   importServer:()=>ipcRenderer.invoke(IPC.importServer),
+  connectServer:ip=>ipcRenderer.invoke(IPC.connectServer,ip),
   getAppInfo: () => ipcRenderer.invoke(IPC.appInfo),
   checkServices: () => ipcRenderer.invoke(IPC.services),
   getAuthState: () => ipcRenderer.invoke(IPC.authState),

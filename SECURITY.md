@@ -9,7 +9,7 @@ Não publique credenciais, e-mails de membros, IPs privados, arquivos de conexã
 - Endpoints administrativos exigem membro autorizado e e-mail administrador configurado no servidor.
 - Secrets de banco/LiveKit existem apenas no host. PAT Supabase é usado somente durante a alteração do provedor, sem persistência. A chave publishable é pública por definição.
 - Arquivos privados são ignorados pelo Git e pelo build Docker. Isso não remove um segredo que já tenha sido publicado: nesse caso revogue/rotacione e remova do histórico.
-- A API/LiveKit de casa usam TLS com certificado fixado no desktop. O JSON de conexão deve ser recebido por canal confiável; importar outro certificado significa confiar em outro host.
+- A API/LiveKit de casa usam TLS com certificado fixado no desktop. Na conexão por IP, a coleta inicial realiza apenas o handshake TLS, sem enviar credenciais; a confiança só é salva após confirmação explícita. Confira a identificação SHA-256 com o administrador por canal confiável: o IP sozinho não comprova a identidade do servidor na primeira conexão. O JSON legado também deve ser recebido por canal confiável. Confiar em outro certificado significa confiar em outro host.
 - O painel local HTTP fica publicado exclusivamente em loopback. Não altere essa porta para `0.0.0.0` e não encaminhe por túnel sem HTTPS.
 - O Firewall é aplicado pelo operador Windows. Docker não garante a restrição por IP apenas porque uma lista foi salva. Revise regras permissivas existentes e valide bloqueio com outra máquina.
 

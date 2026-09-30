@@ -16,7 +16,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       const listeners = new Set<(event: import('../../src/shared/ipc/contracts').LiveEvent) => void>();
       window.addEventListener('test-live', event => listeners.forEach(listener => listener((event as CustomEvent).detail)));
       window.discorda = {
-        updates:async()=>({status:'idle'}),importServer:async()=>false,voiceActivity:async()=>{},audioStatus:async()=>({supported:true,os:"test"}), devicePermissions: async()=>{}, audioApplications:async()=>[], applicationAudio:async()=>{}, onApplicationAudio:()=>()=>{}, onApplicationAudioEnd:()=>()=>{},
+        updates:async()=>({status:'ready',version:'9.0.0'}),importServer:async()=>false,connectServer:async()=>({ok:false}),voiceActivity:async()=>{},audioStatus:async()=>({supported:true,os:"test"}), devicePermissions: async()=>{}, audioApplications:async()=>[], applicationAudio:async()=>{}, onApplicationAudio:()=>()=>{}, onApplicationAudioEnd:()=>()=>{},
         microphoneTest: async () => {},
         media: async () => ({ok: false, message: "Media unavailable"}), captureSources: async () => [], selectCapture: async () => {},
       startLive: async () => { listeners.forEach(listener => listener({kind: 'connection', data: 'connected'})); }, stopLive: async () => {}, liveActivity: async () => {}, onLiveEvent: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
@@ -49,6 +49,11 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.goto('http://127.0.0.1:5183');
     await expect(page.getByRole('heading', {name: 'geral', exact: true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Canais de voz'}).getByText('Amigo na voz')).toBeVisible();
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+    await page.getByRole('button',{name:/Versão 9.0.0 pronta para instalar/}).click();
+    await expect(page.getByRole('dialog',{name:'Configurações de microfone'})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Instalar e reiniciar'})).toBeVisible();
+    await page.getByRole('button',{name:'Fechar configurações'}).click();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:'Editar nome',exact:true}).click();
     await page.getByRole('textbox',{name:'Nome no Discorda'}).fill('Meu apelido');

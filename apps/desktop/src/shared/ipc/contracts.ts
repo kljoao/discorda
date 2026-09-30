@@ -14,6 +14,7 @@ export interface ServiceStatus {
 export interface DesktopApi {
   updates(action:'status'|'check'|'install'):Promise<UpdateState>;
   importServer():Promise<boolean>;
+  connectServer(ip:string):Promise<{ok:boolean;message?:string}>;
   getAppInfo(): Promise<AppInfo>;
   checkServices(): Promise<ServiceStatus>;
   getAuthState(): Promise<AuthState>;
@@ -46,7 +47,7 @@ export type AuthState =
 export const IPC = {
   audioStatus:'media:audio-status', devicePermissions:'media:permissions', audioApplications:'media:applications', applicationAudio:'media:application-audio', applicationAudioData:'media:audio-data', applicationAudioEnd:'media:audio-end',
   microphoneTest: 'media:test', media: 'media:action', captureSources: 'media:sources', selectCapture: 'media:select',
-  updates:'app:updates',importServer:'app:import-server',appInfo: 'app:info',
+  updates:'app:updates',importServer:'app:import-server',connectServer:'app:connect-server',appInfo: 'app:info',
   services: 'app:check-services',
   authState: 'auth:state',
   signIn: 'auth:sign-in',

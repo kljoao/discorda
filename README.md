@@ -8,10 +8,10 @@ Comunicação para grupos: chat, chamadas, câmera e compartilhamento de tela. C
 
 1. Instale o Discorda pela página de [releases](https://github.com/kljoao/discorda/releases).
 2. Instale o [Radmin VPN](https://www.radmin-vpn.com/) e entre na rede privada informada pelo administrador.
-3. Receba dele o arquivo `Discorda-conexao.json` por uma conversa privada. Importe-o no aplicativo e confira o endereço do servidor.
+3. No Discorda 0.7.1 ou mais recente, informe o **IP Radmin do servidor** recebido do administrador. Confira a identificação do certificado com ele e clique em **Confiar e conectar**. O app salva a conexão e reinicia; não é necessário receber um arquivo JSON.
 4. Entre com Google. O administrador deve autorizar seu e-mail no Discorda e seu IP no Firewall. Se o Google estiver em modo de testes, também precisa adicionar seu e-mail aos usuários de teste.
 
-O computador que hospeda o servidor precisa estar ligado, com Docker e Radmin funcionando. O arquivo de conexão contém o endereço do servidor e certificados **públicos**, não uma senha. Ainda assim, não publique esse arquivo.
+O computador que hospeda o servidor precisa estar ligado, com Docker e Radmin funcionando. Informe o IP do host, não o IP do seu próprio PC. A primeira conexão usa confiança explícita no certificado apresentado; confirme sua identificação com o administrador. Nas próximas conexões, mudanças inesperadas de certificado são bloqueadas. Arquivos JSON antigos continuam aceitos na opção secundária de importação.
 
 ## Hospedar em casa — Windows e Radmin
 
@@ -76,7 +76,7 @@ O primeiro login exige que Google já esteja configurado no dashboard, conforme 
 
 As regras geradas chamam-se `Discorda SelfHost *` e liberam API TCP 7443, mídia TCP 7881 e UDP 7882. **Revise regras amplas do Docker e regras antigas do Discorda no Firewall:** permissões existentes podem anular o isolamento pretendido. Não abra essas portas no roteador. O comportamento de Firewall/encaminhamento do Docker Desktop precisa ser verificado no host; teste também um IP não autorizado. O login e a whitelist continuam obrigatórios independentemente da rede.
 
-Compartilhe somente `.discorda/selfhost/Discorda-conexao.json` com seus amigos. Não envie a pasta `.discorda` inteira. Instale o desktop no host também e importe o mesmo arquivo.
+Compartilhe o IP Radmin do host e a identificação pública do certificado em uma conversa privada. Consulte ambos com `pwsh -File tools/show-server-identity.ps1`. Os amigos informam o IP no app e confirmam a identificação. Instale o desktop no host também e use esse mesmo IP. Para clientes antigos, o assistente ainda gera `.discorda/selfhost/Discorda-conexao.json`; não compartilhe a pasta `.discorda` inteira.
 
 ### 5. Validar a instalação
 
@@ -120,5 +120,3 @@ Nunca inclua `.discorda`, `.env`, PFX, user-secrets, conexão JSON, backups ou l
 ## Limites atuais
 
 A instalação guiada é voltada a Windows/Radmin, um servidor e um grupo. O Supabase continua sendo dependência externa para autenticação. Secrets de infraestrutura são gerenciadas no host, com reinício; o painel não é um gerenciador genérico de senhas. A aplicação do Firewall é uma etapa elevada explícita. Não há promessa de proteção contra administradores locais do computador ou de disponibilidade quando o host está desligado.
-
-

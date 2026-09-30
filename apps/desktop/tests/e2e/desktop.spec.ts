@@ -17,7 +17,7 @@ test('built desktop loads with a sandboxed preload and functional health action'
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
     expect(await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined');
-    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['updates','importServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
+    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
     // Electron exposes this diagnostic method at runtime but omits it from its public types.
     const preferences = await app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents as unknown as {
@@ -34,6 +34,22 @@ test('built desktop loads with a sandboxed preload and functional health action'
     await expect(page.getByRole('region', { name: 'Sua conta' }).getByRole('status')).toContainText(/servidor|configurad/);
     await page.evaluate(() => window.scrollTo(0, 0));
     await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
+    await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('app:info');ipcMain.handle('app:info',()=>({version:'test',platform:'win32',serverConfigured:false}));});
+    await page.reload();
+    await page.getByLabel('IP Radmin do servidor').fill('127.0.0.1');
+    await page.getByRole('button',{name:'Conectar ao grupo',exact:true}).click();
+    await expect(page.getByText('Informe apenas o IPv4 Radmin do servidor (26.x.x.x), sem porta ou endereço web.')).toBeVisible();
+    await page.getByLabel('IP Radmin do servidor').fill('26.10.10.1');
+    await page.screenshot({path:'test-results/connect-by-ip.png',fullPage:true});
+    await page.getByRole('button',{name:'Configurações do aplicativo'}).click();
+    await expect(page.getByRole('dialog')).toBeVisible();
+    await expect(page.getByRole('region',{name:'Atualizações'})).toBeVisible();
+    await page.screenshot({path:'test-results/settings.png',fullPage:true});
+    await page.keyboard.press('Escape');
+    await expect(page.getByRole('dialog')).not.toBeVisible();
+    await page.setViewportSize({width:640,height:780});
+    expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
+    await expect(page.getByRole('button',{name:'Conectar ao grupo',exact:true})).toBeVisible();
   } finally { await app.close(); }
 });
 
@@ -50,15 +66,9 @@ test('development renderer loads through Vite with its development CSP', async (
     app = await electron.launch({ args: [path.resolve('.'), `--user-data-dir=${userData}`], env });
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
-    await expect(page.getByText('Desktop · v0.7.0')).toBeVisible();
+    await expect(page.getByText('Desktop · v0.7.1')).toBeVisible();
   } finally {
     await app?.close();
     await server.close();
   }
 });
-
-
-
-
-
-

@@ -22,3 +22,7 @@ apps/desktop/resources/lan.json
 *.p12
 *private*.pem
 *signing*.pem
+
+# Local authoring tools and promotional renders
+.agents/
+brag-output*/

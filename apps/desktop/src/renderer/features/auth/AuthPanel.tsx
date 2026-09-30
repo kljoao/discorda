@@ -43,10 +43,10 @@ export function AuthPanel({ onStateChange }: { onStateChange?: (state: AuthState
     finally { setBusy(false); }
   }
 
-  return <section className="connection-panel auth-panel" aria-label="Sua conta">
+  return <section className="connection-panel auth-panel" aria-label="Sua conta" data-state={state.status}>
     <div className="connection-icon"><LogIn size={22} /></div>
     <div className="connection-copy">
-      <h3>{state.status === 'signed-in' ? `Bom te ver, ${state.profile.displayName}.` : 'Seu lugar está aqui.'}</h3>
+      <h3>{state.status === 'signed-in' ? `Bom te ver, ${state.profile.displayName}.` : state.status === 'signing-in' ? 'Continue no navegador' : state.status === 'unavailable' ? 'Vamos restabelecer a conexão' : 'Entre no seu grupo'}</h3>
       <p role="status" aria-live="polite">{state.status === 'signed-in' ? `${state.profile.email} · Acesso ao grupo autorizado` : state.status === 'signing-in' ? 'Conclua o login no navegador e volte para cá.' : state.message || 'Entre com Google usando uma conta autorizada pelo grupo.'}</p>
       {editing && <form className="profile-form" onSubmit={saveName}><label>Nome no Discorda<input autoFocus aria-label="Nome no Discorda" maxLength={32} value={name} onChange={e=>setName(e.target.value)}/></label><button disabled={busy || !name.trim()}>Salvar nome</button><button type="button" disabled={busy} onClick={()=>setEditing(false)}>Cancelar</button>{profileError && <span role="alert">{profileError}</span>}</form>}
     </div>

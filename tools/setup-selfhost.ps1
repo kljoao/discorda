@@ -76,6 +76,6 @@ room:
 logging:
   level: warn
 "@ | Set-Content -LiteralPath (Join-Path $directory 'livekit.yaml') -Encoding utf8
-Write-Output 'Configuração criada em .discorda/selfhost. Compartilhe somente Discorda-conexao.json, em privado.'
+Write-Output 'Configuração criada em .discorda/selfhost. Amigos podem conectar pelo IP Radmin, sem JSON. Consulte a identificação do certificado com tools/show-server-identity.ps1. O JSON continua disponível para clientes antigos.'
 Write-Output 'No Supabase, configure Google e autorize http://localhost:18080/admin/index.html e http://127.0.0.1:3000/redirect/** como redirects.'
 if (!$ConfigureOnly) { & (Join-Path $PSScriptRoot 'start-selfhost.ps1') }
