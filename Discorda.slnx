@@ -1,0 +1,11 @@
+<Solution>
+  <Folder Name="/services/" />
+  <Folder Name="/services/backend/">
+    <Project Path="services/backend/Discorda.Api/Discorda.Api.csproj" />
+    <Project Path="services/backend/Discorda.Core/Discorda.Core.csproj" />
+    <Project Path="services/backend/Discorda.Infrastructure/Discorda.Infrastructure.csproj" />
+  </Folder>
+  <Folder Name="/services/backend/tests/">
+    <Project Path="services/backend/tests/Discorda.IntegrationTests/Discorda.IntegrationTests.csproj" />
+  </Folder>
+</Solution>

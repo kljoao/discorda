@@ -1,0 +1,65 @@
+name: discorda-home
+x-api: &api
+  image: discorda-api:local
+  build:
+    context: ../..
+    dockerfile: services/backend/Discorda.Api/Dockerfile
+  environment:
+    DISCORDA_CONFIG_FILE: /run/discorda/settings.json
+    ASPNETCORE_ENVIRONMENT: Production
+  volumes:
+    - ../../.discorda/selfhost/settings.json:/run/discorda/settings.json:ro
+    - ../../.discorda/selfhost/server.pfx:/run/discorda/server.pfx:ro
+    - state:/app/state
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  logging:
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+services:
+  postgres:
+    image: postgres:17.9-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: discorda
+      POSTGRES_USER: discorda
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [database:/var/lib/postgresql/data]
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U discorda -d discorda']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *api
+    command: [migrate]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: 'no'
+  livekit:
+    image: livekit/livekit-server:v1.13.7
+    command: [--config, /etc/livekit.yaml]
+    restart: unless-stopped
+    volumes: [../../.discorda/selfhost/livekit.yaml:/etc/livekit.yaml:ro]
+    ports:
+      - '${DISCORDA_HOST_IP:?Run setup-selfhost.ps1}:7881:7881/tcp'
+      - '${DISCORDA_HOST_IP}:7882:7882/udp'
+    logging:
+      driver: json-file
+      options: {max-size: 10m, max-file: '3'}
+  api:
+    <<: *api
+    restart: unless-stopped
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      livekit: {condition: service_started}
+    ports:
+      - '${DISCORDA_HOST_IP}:7443:7443'
+      - '127.0.0.1:18080:8080'
+volumes:
+  database:
+  state:
+secrets:
+  postgres_password:
+    file: ../../.discorda/selfhost/postgres-password

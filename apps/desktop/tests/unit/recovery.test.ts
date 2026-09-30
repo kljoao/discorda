@@ -1,0 +1,7 @@
+import {it,expect,vi,afterEach} from 'vitest';
+import {DisconnectReason} from 'livekit-client';
+import {CallRecovery,canRecover} from '../../src/renderer/features/chat/recovery';
+afterEach(()=>vi.useRealTimers());
+it('retries a temporary failure and stops on success',async()=>{vi.useFakeTimers();const retry=new CallRecovery(),attempt=vi.fn().mockResolvedValueOnce(false).mockResolvedValue(true),failed=vi.fn();retry.start(attempt,failed);await vi.advanceTimersByTimeAsync(30000);expect(attempt).toHaveBeenCalledTimes(2);expect(failed).not.toHaveBeenCalled();});
+it('manual cancellation prevents a pending retry from restoring a call',async()=>{vi.useFakeTimers();const retry=new CallRecovery();let finish!:(ok:boolean)=>void;const attempt=vi.fn(()=>new Promise<boolean>(resolve=>finish=resolve));retry.start(attempt,vi.fn());await vi.advanceTimersByTimeAsync(1000);retry.cancel();finish(false);await vi.advanceTimersByTimeAsync(60000);expect(attempt).toHaveBeenCalledTimes(1);});
+it('never rejoins on removal, identity conflict or deliberate leave',()=>{for(const reason of [DisconnectReason.PARTICIPANT_REMOVED,DisconnectReason.DUPLICATE_IDENTITY,DisconnectReason.CLIENT_INITIATED])expect(canRecover(reason)).toBe(false);expect(canRecover(DisconnectReason.SIGNAL_CLOSE)).toBe(true);});

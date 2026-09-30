@@ -1,0 +1,22 @@
+{
+  "name": "discorda",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": ["apps/desktop", "tools/media-lab"],
+  "engines": { "node": ">=24 <25" },
+  "scripts": {
+    "audit:source": "node tools/audit-source.mjs",
+    "dev": "npm run dev --workspace @discorda/desktop",
+    "test:media": "npm run smoke --workspace @discorda/media-lab",
+    "media:lab": "npm run manual --workspace @discorda/media-lab",
+    "build": "npm run build --workspace @discorda/desktop",
+    "typecheck": "npm run typecheck --workspace @discorda/desktop",
+    "test": "npm run test --workspace @discorda/desktop",
+    "test:desktop": "npm run test:desktop --workspace @discorda/desktop",
+    "package:win": "npm run package:win --workspace @discorda/desktop",
+    "package:release": "npm run package:release --workspace @discorda/desktop",
+    "api": "dotnet run --project services/backend/Discorda.Api",
+    "test:backend": "dotnet test Discorda.slnx",
+    "db:migrate": "dotnet ef database update --project services/backend/Discorda.Infrastructure --startup-project services/backend/Discorda.Api"
+  }
+}

@@ -1,0 +1,14 @@
+import {readFile,writeFile,stat} from 'node:fs/promises';
+import {createReadStream} from 'node:fs';
+import {createHash,createPrivateKey,createPublicKey,sign} from 'node:crypto';
+import path from 'node:path';
+const {version}=JSON.parse(await readFile('package.json','utf8'));
+const file=`Discorda-${version}-setup.exe`,target=path.join('release',file);
+const key=createPrivateKey(await readFile(process.env.DISCORDA_UPDATE_SIGNING_KEY??path.join(process.env.LOCALAPPDATA,'DiscordaBuild/update-signing.pem')));
+const publicKey=createPublicKey(key).export({type:'spki',format:'pem'});
+const source=await readFile('src/main/update-key.ts','utf8');
+if(!source.includes(JSON.stringify(publicKey)))throw new Error('The signing key does not match the key embedded in this app.');
+const hash=createHash('sha256');for await(const chunk of createReadStream(target))hash.update(chunk);
+const manifest={version,file,sha256:hash.digest('hex'),size:(await stat(target)).size};
+await writeFile('release/discorda-update.json',JSON.stringify({...manifest,signature:sign(null,Buffer.from(JSON.stringify(manifest)),key).toString('base64')},null,2));
+console.log('Release manifest signed. Keep the private signing key off GitHub.');

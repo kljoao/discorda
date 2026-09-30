@@ -1,0 +1,35 @@
+{
+  "version": 1,
+  "dependencies": {
+    "net10.0": {
+      "NAudio.Wasapi": {
+        "type": "Direct",
+        "requested": "[2.2.1, )",
+        "resolved": "2.2.1",
+        "contentHash": "lFfXoqacZZe0WqNChJgGYI+XV/n/61LzPHT3C1CJp4khoxeo2sziyX5wzNYWeCMNbsWxFvT3b3iXeY1UYjBhZw==",
+        "dependencies": {
+          "NAudio.Core": "2.2.1"
+        }
+      },
+      "YellowDogMan.ApplicationLoobpack.NET": {
+        "type": "Direct",
+        "requested": "[1.0.1, )",
+        "resolved": "1.0.1",
+        "contentHash": "H6mkfN94TVm/xSpBRvQravnaVRrf3vntmKK8172H9WXAZTVjX2AMsUX+PX2qVN7UcHsMC+qDP87fT3xjqizqBQ=="
+      },
+      "NAudio.Core": {
+        "type": "Transitive",
+        "resolved": "2.2.1",
+        "contentHash": "GgkdP6K/7FqXFo7uHvoqGZTJvW4z8g2IffhOO4JHaLzKCdDOUEzVKtveoZkCuUX8eV2HAINqi7VFqlFndrnz/g=="
+      }
+    },
+    "net10.0/win-x64": {
+      "YellowDogMan.ApplicationLoobpack.NET": {
+        "type": "Direct",
+        "requested": "[1.0.1, )",
+        "resolved": "1.0.1",
+        "contentHash": "H6mkfN94TVm/xSpBRvQravnaVRrf3vntmKK8172H9WXAZTVjX2AMsUX+PX2qVN7UcHsMC+qDP87fT3xjqizqBQ=="
+      }
+    }
+  }
+}

@@ -1,0 +1,14 @@
+.git
+node_modules
+**/node_modules
+**/bin
+**/obj
+**/dist
+**/release
+**/test-results
+.env*
+artifacts
+.discorda
+**/*.pfx
+**/*.pem
+apps/desktop/resources/lan.json

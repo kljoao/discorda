@@ -1,0 +1,41 @@
+name: Validate
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  backend:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+      - run: dotnet restore Discorda.slnx --locked-mode
+      - run: dotnet build Discorda.slnx -c Release --no-restore
+      - run: dotnet test Discorda.slnx -c Release --no-build
+      - run: docker build -f services/backend/Discorda.Api/Dockerfile -t discorda-api:ci .
+  desktop:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run audit:source
+      - run: npm test
+      - run: npm run build
+      - run: npm run test:desktop
+      - run: npm run package:win
+      - name: Smoke packaged desktop
+        shell: pwsh
+        run: |
+          $env:DISCORDA_E2E_EXECUTABLE = Join-Path $pwd 'apps/desktop/release/community/win-unpacked/Discorda.exe'
+          npm run test:desktop
+      - uses: actions/upload-artifact@v4
+        with:
+          name: windows-preview
+          path: apps/desktop/release/community/*.exe

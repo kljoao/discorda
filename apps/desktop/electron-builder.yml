@@ -1,0 +1,40 @@
+appId: dev.discorda.desktop
+productName: Discorda
+directories:
+  output: release
+files:
+  - dist/**/*
+  - package.json
+  - resources/icon.png
+  - resources/icon.ico
+  - resources/THIRD-PARTY-LICENSES.txt
+  - '!node_modules/**/*'
+electronLanguages:
+  - pt-BR
+  - en-US
+compression: maximum
+asar: true
+npmRebuild: false
+win:
+  signtoolOptions:
+    publisherName: Discorda
+  icon: resources/icon.ico
+  target: nsis
+  artifactName: Discorda-${version}-setup.${ext}
+nsis:
+  oneClick: false
+  allowToChangeInstallationDirectory: true
+  createDesktopShortcut: true
+  createStartMenuShortcut: true
+  shortcutName: Discorda
+
+extraResources:
+  - from: ../../LICENSE
+    to: LICENSE.txt
+  - from: resources/windows-audio
+    to: windows-audio
+publish:
+  provider: github
+  owner: kljoao
+  repo: discorda
+  releaseType: release
