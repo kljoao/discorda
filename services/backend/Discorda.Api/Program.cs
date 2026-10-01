@@ -15,6 +15,7 @@ using Serilog.Formatting.Compact;
 var builder = WebApplication.CreateBuilder(args);
 var selfHostConfig = Environment.GetEnvironmentVariable("DISCORDA_CONFIG_FILE");
 if (!string.IsNullOrWhiteSpace(selfHostConfig)) builder.Configuration.AddJsonFile(selfHostConfig, optional: false, reloadOnChange: false);
+builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 65536);
 builder.Services.AddSingleton<NetworkPolicy>();
 builder.Services.AddHttpClient("supabase-management", client => client.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
@@ -41,6 +42,9 @@ builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("postgres", tag
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("admin-writes", context => RateLimitPartition.GetFixedWindowLimiter(
+        context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
+        _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
         RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
             _ => new FixedWindowRateLimiterOptions
@@ -80,7 +84,7 @@ app.UseSerilogRequestLogging(options =>
 {
     options.MessageTemplate = "HTTP {RequestMethod} {RequestPath} returned {StatusCode} in {Elapsed:0.0000} ms";
 });
-app.UseRateLimiter();
+
 app.UseStaticFiles(new StaticFileOptions {
     OnPrepareResponse = context => {
         context.Context.Response.Headers["Content-Security-Policy"] = "default-src 'self'; script-src 'self'; style-src 'self'; connect-src 'self' https://*.supabase.co; frame-ancestors 'none'; base-uri 'none'; form-action 'self'";
@@ -88,6 +92,7 @@ app.UseStaticFiles(new StaticFileOptions {
     }
 });
 app.UseAuthentication();
+app.UseRateLimiter();
 app.UseAuthorization();
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }).AllowAnonymous();

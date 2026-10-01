@@ -40,3 +40,6 @@ describe('live chat lifecycle', () => {
     await client.stop();
   });
 });
+it('coalesces manual reconnects and ignores old connection callbacks',async()=>{
+ vi.useFakeTimers();const emit=vi.fn(),client=new LiveChatClient('http://127.0.0.1:5080',async()=>'',emit,()=>false);client.start();await vi.advanceTimersByTimeAsync(1);const old=mocked.connections[0];await Promise.all([client.reconnect(),client.reconnect()]);await vi.advanceTimersByTimeAsync(1);expect(mocked.connections).toHaveLength(2);const before=emit.mock.calls.length;old.onreconnecting.mock.calls[0][0]();expect(emit).toHaveBeenCalledTimes(before);expect(client.snapshot.state).toBe('connected');await client.stop();await client.reconnect();expect(mocked.connections).toHaveLength(2);
+});

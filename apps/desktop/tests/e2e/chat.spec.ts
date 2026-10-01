@@ -14,9 +14,12 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       const messages: import('../../src/shared/ipc/contracts').ChatMessage[] = [];
       let dropResponse = true;
       let memberFailure = true;
+      const allowedUsers=[{email:'admin@example.test',enabled:true}];
       const listeners = new Set<(event: import('../../src/shared/ipc/contracts').LiveEvent) => void>();
       window.addEventListener('test-live', event => listeners.forEach(listener => listener((event as CustomEvent).detail)));
       window.discorda = {
+        admin:async action=>{if(action.kind==='settings')return {ok:true,data:{adminEmail:'admin@example.test'}};if(action.kind==='users')return {ok:true,data:allowedUsers};if(action.kind==='network')return {ok:true,data:[]};if(action.kind==='user'){allowedUsers.push({email:action.email,enabled:action.enabled});return {ok:true,data:null};}return {ok:true,data:null};},notifyMessage:async()=>{},
+        reconnectLive:async()=>{},diagnostics:async()=>({version:'test',platform:'win32',checkedAt:'',api:'online',database:'ready',chat:'connected',attempts:1,callActive:false,update:'idle'}),
         updates:async()=>({status:'ready',version:'9.0.0'}),importServer:async()=>false,connectServer:async()=>({ok:false}),voiceActivity:async()=>{},audioStatus:async()=>({supported:true,os:"test"}), devicePermissions: async()=>{}, audioApplications:async()=>[], applicationAudio:async()=>{}, onApplicationAudio:()=>()=>{}, onApplicationAudioEnd:()=>()=>{},
         microphoneTest: async () => {},
         media: async () => ({ok: false, message: "Media unavailable"}), captureSources: async () => [], selectCapture: async () => {},
@@ -28,7 +31,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
         chat: async (action) => {
           if (action.kind === 'members' && memberFailure) {memberFailure=false;return {ok:false,message:'Temporariamente indisponível'};}
           if (action.kind === 'members') return {ok:true,data:[{id:'past-member',name:'Amigo offline',status:'offline',typingChannelId:null,avatarUrl:null}]};
-          if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: 'Grupo de teste', role: 'Owner', userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
+          if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: 'Grupo de teste', role: 'Owner',isAdmin:true, userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
           if (action.kind === 'voiceRoster') return {ok:true,data:[{channelId:'bde069ed-d1c4-4930-92d3-9360eab43cb8',userId:'friend',name:'Amigo na voz'}]};
           if (action.kind === 'profile') {displayName=action.displayName;return {ok:true,data:{id:'test-user',displayName,email:'test@example.test'}};}
           if (action.kind === 'history') { const items = messages.filter(m => m.channelId === action.channelId && (!action.before || BigInt(m.id) < BigInt(action.before))); return {ok: true, data: {items: items.slice(-50), hasMore: items.length > 50}}; }
@@ -57,6 +60,19 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('button',{name:'Tentar novamente',exact:true}).click();
     await expect(page.getByRole('region',{name:'Offline',exact:true}).getByText('Amigo offline')).toBeVisible();
     await page.screenshot({path:'test-results/offline-members.png',fullPage:true});
+    await page.getByRole('button',{name:'Administrar servidor',exact:true}).click();
+    const administration=page.getByRole('dialog',{name:'Administrar servidor'});
+    await expect(administration.getByRole('button',{name:'Bloquear'})).toBeDisabled();
+    await administration.getByLabel('E-mail',{exact:true}).fill('friend@example.test');
+    await administration.getByRole('button',{name:'Autorizar pessoa'}).click();
+    await expect(administration.getByText('friend@example.test · Autorizado')).toBeVisible();
+    await page.screenshot({path:'test-results/admin.png',fullPage:true});
+    await administration.getByRole('button',{name:'Fechar',exact:true}).click();
+    for (const data of ['reconnecting','offline']) {
+      await page.evaluate(data=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'connection',data}})),data);
+      await expect(page.getByRole('region',{name:'Offline',exact:true}).getByText('Amigo offline')).toBeVisible();
+      await expect(page.getByText('Não foi possível atualizar a lista.')).toHaveCount(0);
+    }
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'presence',data:[{id:'past-member',name:'Amigo offline',status:'online',typingChannelId:null,avatarUrl:null}]}})));
     await expect(page.getByRole('region',{name:'Offline',exact:true})).toHaveCount(0);
     await expect(page.getByRole('region',{name:'Disponíveis',exact:true}).getByText('Amigo offline')).toBeVisible();
@@ -68,6 +84,9 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('button',{name:'Voz e microfone',exact:true}).click();
     await expect(page.getByLabel('Volume de entrada',{exact:true})).toBeVisible();
     await page.screenshot({path:'test-results/settings-redesign.png',fullPage:true});
+    await page.getByRole('button',{name:'Conexão e diagnóstico',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Exportar diagnóstico'})).toBeVisible();
+    await page.screenshot({path:'test-results/diagnostics.png',fullPage:true});
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:'Editar nome',exact:true}).click();
@@ -79,6 +98,13 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('alert')).toContainText('Resposta perdida');
     await page.getByRole('button', {name: 'Tentar enviar novamente'}).click();
     await expect(page.getByRole('article')).toHaveCount(1);
+    await expect(page.getByRole('textbox',{name:'Mensagem',exact:true})).toBeFocused();
+    expect(await page.getByRole('textbox',{name:'Mensagem',exact:true}).evaluate(el=>getComputedStyle(el).resize)).toBe('none');
+    await page.getByRole('button',{name:'Escolher emoji'}).click();
+    await page.getByRole('button',{name:'Inserir 🎉',exact:true}).click();
+    await expect(page.getByRole('textbox',{name:'Mensagem',exact:true})).toHaveValue('🎉');
+    await expect(page.getByRole('textbox',{name:'Mensagem',exact:true})).toBeFocused();
+    await page.getByRole('textbox',{name:'Mensagem',exact:true}).fill('');
     await page.getByRole('button', {name: 'Editar', exact: true}).click();
     await page.getByRole('textbox', {name: 'Mensagem', exact: true}).fill('Mensagem editada');
     await page.getByRole('button', {name: 'Salvar edição'}).click();
@@ -121,6 +147,21 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     });
     await expect(page.getByRole('article')).toHaveCount(65);
     await expect(page.getByRole('textbox', {name: 'Mensagem', exact: true})).toHaveValue('Rascunho preservado');
+    const composer=page.getByRole('textbox',{name:'Mensagem',exact:true});
+    await composer.focus();await page.keyboard.press('Enter');await expect(composer).toHaveValue('');await expect(composer).toBeFocused();
+    await page.keyboard.type('Segunda sem clicar');await page.keyboard.press('Enter');await expect(composer).toHaveValue('');await expect(composer).toBeFocused();
+    await expect(page.getByRole('article').last()).toContainText('Segunda sem clicar');
+    await page.locator('.message-list').evaluate(el=>{el.scrollTop=0;el.dispatchEvent(new Event('scroll'));});
+    await page.getByRole('button',{name:'Voltar às mensagens recentes ↓'}).click();
+    await expect(page.getByRole('button',{name:'Voltar às mensagens recentes ↓'})).toHaveCount(0);
+    await page.getByRole('button',{name:'Silenciar este canal',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Ativar avisos deste canal',exact:true})).toHaveAttribute('aria-pressed','true');
+    await page.getByLabel('Notificações do Windows').check();
+    await page.evaluate(async()=>{const r=await window.discorda!.chat({kind:'send',channelId:'225a47d7-779e-4992-89d2-03b1517f9112',clientId:crypto.randomUUID(),body:'Nova em outro canal'});if(!r.ok)throw Error('fixture');window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'message',data:r.data}}));});
+    const general=page.getByRole('navigation',{name:'Canais',exact:true}).getByRole('button',{name:/geral/});
+    await expect(general.getByLabel('Mensagens não lidas')).toBeVisible();
+    await general.click();await expect(page.getByRole('article').last()).toContainText('Nova em outro canal');
+    await expect(general.getByLabel('Mensagens não lidas')).toHaveCount(0);
   } finally { await browser.close(); await server.close(); }
 });
 

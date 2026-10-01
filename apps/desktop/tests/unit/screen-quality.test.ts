@@ -18,3 +18,6 @@ describe('screen quality',()=>{
   vi.unstubAllGlobals();
  });
 });
+it('offers receiver layers only in automatic mode while keeping a 1080p60 top layer',()=>{
+ const {capture,publish}=screenOptions('auto',60);expect(capture.resolution).toMatchObject({width:1920,height:1080,frameRate:60});expect(publish.simulcast).toBe(true);expect(publish.screenShareSimulcastLayers).toHaveLength(2);expect(publish.degradationPreference).toBe('balanced');
+});

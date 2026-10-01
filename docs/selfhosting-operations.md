@@ -64,7 +64,7 @@ docker compose --env-file .discorda/selfhost/compose.env -f infra/compose/selfho
 docker compose --env-file .discorda/selfhost/compose.env -f infra/compose/selfhost.yml up -d --force-recreate api
 ```
 
-Para bloquear explicitamente o e-mail antigo após entrar: use o painel. A troca de administrador não apaga automaticamente a conta antiga nem seus dados. Permissões de Owner concedidas no grupo devem ser revisadas se trocar o administrador.
+Para bloquear explicitamente o e-mail antigo após entrar: use o painel. A troca de administrador não apaga automaticamente a conta antiga nem seus dados. Na versão 0.9, o administrador anterior perde também a criação de canais: a API confere o e-mail configurado em cada operação.
 
 ## Rotacionar secrets e certificado
 

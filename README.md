@@ -120,3 +120,30 @@ Nunca inclua `.discorda`, `.env`, PFX, user-secrets, conexão JSON, backups ou l
 ## Limites atuais
 
 A instalação guiada é voltada a Windows/Radmin, um servidor e um grupo. O Supabase continua sendo dependência externa para autenticação. Secrets de infraestrutura são gerenciadas no host, com reinício; o painel não é um gerenciador genérico de senhas. A aplicação do Firewall é uma etapa elevada explícita. Não há promessa de proteção contra administradores locais do computador ou de disponibilidade quando o host está desligado.
+
+## Conexão, chamadas e diagnóstico (0.8)
+
+- **Chat:** Enter envia, Shift+Enter insere uma linha. O campo permanece selecionado após o envio; o botão de sorriso abre os emojis. A caixa tem altura fixa e rolagem interna.
+- **Reconexão:** o chat tenta reconectar automaticamente e recupera o histórico. Há também um botão **Reconectar chat**. Ao voltar da suspensão, a conexão do chat é refeita. Chamadas tentam recuperar quedas temporárias; a volta da rede antecipa uma tentativa pendente. Remoção pelo administrador não provoca reentrada automática. Câmera e tela não são reiniciadas automaticamente após uma nova entrada.
+- **Vídeo:** Automático publica até 1080p/60 fps, com camadas menores para adaptar a recepção. Perfis manuais mantêm a preferência por resolução. Hardware, conteúdo capturado e rede determinam a resolução e FPS efetivos, exibidos na tela. 60 fps é um limite solicitado, não uma garantia.
+- **Áudio:** há compressão suave e compensação de ganho nas vozes, mantendo separado o áudio compartilhado. Os volumes individuais continuam salvos. Em Dispositivos, teste o som dos fones e escolha a saída. Ao desconectar o microfone, o substituto permanece silenciado até confirmação. Captura automática de aplicativos continua voltada ao Windows 11; Discord/Discorda e seus processos relacionados são excluídos, com opção de excluir navegadores para Discord web.
+- **Diagnóstico:** Configurações → Conexão e diagnóstico verifica API, banco e chat, permite reconectar e exportar JSON local. A exportação contém somente versão, plataforma, horários e estados/contadores de conexão; não inclui endereços, contas, mensagens ou credenciais. Nada é enviado automaticamente.
+- **Atualizações:** a instalação assinada continua bloqueada durante chamadas. Na próxima abertura da interface, o aplicativo confirma a versão instalada ou avisa que a atualização não foi concluída. Se o programa não abrir, reinstale o instalador oficial; não há rollback automático.
+
+Para validar em dois PCs: envie mensagens seguidas, entre em voz, compartilhe jogo e música, confirme ausência de retorno de Discord/Discorda, troque os fones, desligue e religue a rede e confira reconexão e volumes. Compare Automático com 1080p/60 fps, observando os números efetivos. Testes automatizados não substituem essa validação de áudio e vídeo nos dispositivos reais.
+
+## Administração e painel local (0.9)
+
+No computador servidor, dê dois cliques em **Painel do servidor.cmd** na raiz do clone. Ele usa o Windows PowerShell, sem exigir que `pwsh` esteja no PATH, e oferece estado dos serviços, iniciar/parar, backup, restauração em banco vazio e definição do e-mail administrador. Requer Docker; o piloto nativo também exige o SDK .NET. As operações ficam no computador local, sem servidor HTTP de controle ou Docker socket exposto.
+
+O administrador principal é **uma conta Google verificada cujo e-mail coincide com `Admin.Email`**, definido na instalação ou nesse painel local. O e-mail também precisa estar autorizado. Após trocar o administrador, reinicie a API. Não existe promoção automática do primeiro usuário nem uma opção no cliente para se autodeclarar administrador. A conta anterior perde a gestão do grupo, inclusive a criação de canais, e pode continuar como membro até ser bloqueada. Nesta versão há um administrador principal; delegação de outros administradores ainda não está disponível.
+
+No desktop, a conta administradora verá **Administrar servidor** na lateral: autorizar/bloquear pessoas, editar a lista desejada de IPs e baixar a política de Firewall. A API verifica a permissão em todas as operações; esconder o botão não é o controle de segurança. Salvar IPs não aplica regras do Windows: revise o arquivo e execute-o no host como administrador. Credenciais Google continuam no Supabase ou no painel web. Usuários comuns não recebem esses dados administrativos.
+
+Backups ficam em `.discorda/backups/<identificador>`, com acesso restrito à conta Windows que os criou e SYSTEM. Incluem dump, hash de integridade e configurações privadas, **não são criptografados**. Confira `networkIncluded` no manifesto: se falso, restaure a política de IPs pelo painel. Copie para armazenamento criptografado fora do computador. O hash detecta corrupção, não autentica um backup recebido de terceiros. Restaure apenas backups seus e confiáveis. A restauração recusa bancos com tabelas e usa uma transação; configurações/certificados precisam ser recuperados separadamente conforme [o guia](docs/selfhosting-operations.md). Não restaure um backup no grupo em uso.
+
+O piloto nativo só permite backup automático do PostgreSQL Docker padrão local (porta 54322). Bancos externos exigem o procedimento manual. Os botões de parar no piloto encerram a API/LiveKit conhecidos desse clone; o banco continua sob gerenciamento do Docker. No Compose, parar preserva os volumes.
+
+No chat, os canais mostram mensagens não lidas, há um botão para voltar às mensagens recentes e cada canal pode ter seus avisos silenciados. Ative **Notificações do Windows** na lateral para receber avisos quando o app não estiver em foco. Os avisos não exibem texto, nome ou e-mail. Preferências e marcadores de leitura ficam neste computador, separados por conta/grupo; não sincronizam entre dispositivos.
+
+Validação do painel em banco Docker descartável: `powershell.exe -NoProfile -ExecutionPolicy Bypass -File tools/test-host-panel.ps1`. O teste cria um projeto exclusivo e remove somente seus containers/volumes; não usa o banco do grupo.

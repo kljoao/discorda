@@ -1,4 +1,5 @@
 using System.Net;
+using System.Text.Json;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using Discorda.Core.Users;
@@ -49,4 +50,21 @@ public sealed class AdminTests(AuthFixture fixture) : IClassFixture<AuthFixture>
             Assert.Contains("Owner", workspace);
         } finally { if (Directory.Exists(state)) Directory.Delete(state, true); }
     }
+    [Fact]
+    public async Task ChangingConfiguredAdminRevokesOldOwnerEvenBeforeWorkspaceRefresh()
+    {
+        var oldEmail=Guid.NewGuid()+"@example.test";var nextEmail=Guid.NewGuid()+"@example.test";
+        var oldToken=fixture.Token(Guid.NewGuid(),Guid.NewGuid(),oldEmail);
+        await using(var db=fixture.Database()){db.AllowedUsers.AddRange(new AllowedUser{NormalizedEmail=oldEmail},new AllowedUser{NormalizedEmail=nextEmail});await db.SaveChangesAsync();}
+        await using var first=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=oldEmail})));
+        using(var owner=first.CreateClient()){owner.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",oldToken);var workspace=await owner.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");Assert.True(workspace.GetProperty("isAdmin").GetBoolean());}
+        await using var changed=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=nextEmail})));
+        using var former=changed.CreateClient();former.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",oldToken);
+        Assert.Equal(HttpStatusCode.Forbidden,(await former.PostAsJsonAsync("/api/v1/chat/channels",new{name="forbidden"})).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,(await former.PutAsJsonAsync("/api/v1/admin/users",new{email=oldEmail,enabled=true,isAdmin=true})).StatusCode);
+        var oldWorkspace=await former.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");Assert.False(oldWorkspace.GetProperty("isAdmin").GetBoolean());Assert.Equal("Member",oldWorkspace.GetProperty("role").GetString());
+        using var current=changed.CreateClient();current.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",fixture.Token(Guid.NewGuid(),Guid.NewGuid(),nextEmail));
+        Assert.Equal(HttpStatusCode.OK,(await current.GetAsync("/api/v1/admin/settings")).StatusCode);
+    }
+
 }

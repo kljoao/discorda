@@ -53,15 +53,21 @@ public static class ChatEndpoints
             if (Discorda.Api.Admin.AdminEndpoints.IsAdmin(ctx, app.Configuration))
                 await db.WorkspaceMembers.Where(x => x.WorkspaceId == GroupId && x.UserId == user)
                     .ExecuteUpdateAsync(set => set.SetProperty(x => x.Role, Discorda.Core.Workspaces.MemberRole.Owner), ct);
+            // A former configured administrator must not retain effective owner powers.
+            if (!Discorda.Api.Admin.AdminEndpoints.IsAdmin(ctx, app.Configuration))
+                await db.WorkspaceMembers.Where(x => x.WorkspaceId == GroupId && x.UserId == user && x.Role == Discorda.Core.Workspaces.MemberRole.Owner)
+                    .ExecuteUpdateAsync(set => set.SetProperty(x => x.Role, Discorda.Core.Workspaces.MemberRole.Member), ct);
             var membership = await db.WorkspaceMembers.SingleAsync(x => x.WorkspaceId == GroupId && x.UserId == user, ct);
             var channels = await db.Channels.Where(x => x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Text)
                 .OrderBy(x => x.SortOrder).ThenBy(x => x.Name).Select(x => new { x.Id, x.Name }).ToListAsync(ct);
             var voiceChannels = await db.Channels.Where(x => x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Voice).OrderBy(x => x.SortOrder).Select(x => new { x.Id, x.Name }).ToListAsync(ct);
-            return Results.Ok(new { workspace.Id, workspace.Name, role = membership.Role.ToString(), userId = user, channels, voiceChannels });
+            var heads = await db.Messages.Where(m => db.Channels.Any(c => c.Id == m.ChannelId && c.WorkspaceId == GroupId)).GroupBy(m => m.ChannelId)
+                .Select(g => new { ChannelId = g.Key, LastId = g.Max(m => m.Id) }).ToDictionaryAsync(x => x.ChannelId, x => x.LastId.ToString(), ct);
+            return Results.Ok(new { workspace.Id, workspace.Name, isAdmin = Discorda.Api.Admin.AdminEndpoints.IsAdmin(ctx, app.Configuration), role = membership.Role.ToString(), userId = user, channels = channels.Select(c => new {c.Id,c.Name,lastMessageId=heads.GetValueOrDefault(c.Id)}), voiceChannels });
         });
         api.MapPost("/channels", async (NewChannel input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
-            if (!await db.WorkspaceMembers.AnyAsync(x => x.WorkspaceId == GroupId && x.UserId == UserId(ctx) && x.Role == Discorda.Core.Workspaces.MemberRole.Owner, ct)) return Results.Forbid();
+            if (!Discorda.Api.Admin.AdminEndpoints.IsAdmin(ctx, app.Configuration)) return Results.Forbid();
             var name = input.Name?.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || name.Any(char.IsControl)) return Results.BadRequest();
             var channel = new Channel { WorkspaceId = GroupId, Name = name, Type = ChannelType.Text, SortOrder = 10 };

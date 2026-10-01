@@ -1,3 +1,5 @@
+import packageInfo from '../../package.json' with {type:'json'};
+const {version}=packageInfo;
 import { _electron as electron, expect, test } from '@playwright/test';
 import path from 'node:path';
 import os from 'node:os';
@@ -17,7 +19,7 @@ test('built desktop loads with a sandboxed preload and functional health action'
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
     expect(await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined');
-    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
+    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['admin','notifyMessage','diagnostics','reconnectLive','updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
     // Electron exposes this diagnostic method at runtime but omits it from its public types.
     const preferences = await app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents as unknown as {
@@ -66,7 +68,7 @@ test('development renderer loads through Vite with its development CSP', async (
     app = await electron.launch({ args: [path.resolve('.'), `--user-data-dir=${userData}`], env });
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
-    await expect(page.getByText('Desktop · v0.7.2')).toBeVisible();
+    await expect(page.getByText(`Desktop · v${version}`)).toBeVisible();
   } finally {
     await app?.close();
     await server.close();

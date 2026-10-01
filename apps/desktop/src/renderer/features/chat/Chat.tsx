@@ -1,7 +1,9 @@
+import {useChatAttention} from './attention';
+import {AdminPanel} from './AdminPanel';
 import { useEffect, useRef, useState, type ReactNode } from 'react';
 import { Avatar } from './Avatar';
 import { Voice } from './Voice';
-import { Hash, MessageCircle, Plus, Send, Reply, Pencil, Trash2, X } from 'lucide-react';
+import { Hash, MessageCircle, Plus, Send, Reply, Pencil, Trash2, X, Smile } from 'lucide-react';
 import type { ChatAction, ChatMessage, ChatWorkspace, PresenceMember, LiveEvent } from '../../../shared/ipc/contracts';
 
 async function request<T>(action: ChatAction): Promise<T> {
@@ -23,6 +25,8 @@ export function Chat({ account }: { account: ReactNode }) {
   const [dockHost,setDockHost]=useState<HTMLDivElement|null>(null);
   const [voiceChannel,setVoiceChannel]=useState<string>();
   const [workspace, setWorkspace] = useState<ChatWorkspace>();
+  const attention=useChatAttention(workspace);
+  const [adminOpen,setAdminOpen]=useState(false);
   const [selected, setSelected] = useState<string>();
   const [error, setError] = useState('');
   const [newChannel, setNewChannel] = useState(false);
@@ -51,14 +55,17 @@ export function Chat({ account }: { account: ReactNode }) {
   useEffect(() => {
     mounted.current = true;
     let active = true;
+    const online=()=>{void window.discorda?.reconnectLive();void loadMembers();};
+    window.addEventListener('online',online);
     const off = window.discorda?.onLiveEvent(event => {
       if (!active) return;
       if (event.kind === 'presence') {membersRevision.current++;setPresence(event.data);setMembersState('ready');}
-      if (event.kind === 'connection') { setConnection(event.data); if (event.data !== 'connected') {setPresence([]);setMembersState('error');} else {void load(false);if(workspace)void loadMembers();} }
+      // REST polling owns roster availability even while the live transport reconnects.
+      if (event.kind === 'connection') { setConnection(event.data); if (event.data === 'connected') {void load(false);} }
       if (event.kind === 'channels') void load();
     });
     void load();
-    return () => { active = false; mounted.current = false; off?.(); void window.discorda?.stopLive(); };
+    return () => { active = false; window.removeEventListener('online',online);mounted.current = false; off?.(); void window.discorda?.stopLive(); };
   }, []);
   async function createChannel(event: React.FormEvent) {
     event.preventDefault(); if (creating || !name.trim()) return; setCreating(true);
@@ -68,18 +75,18 @@ export function Chat({ account }: { account: ReactNode }) {
   const channel = workspace?.channels.find(c => c.id === selected);
   return <div className="chat-shell">
     <aside className="chat-sidebar"><div className="sidebar-scroll"><div className="brand"><MessageCircle /> discorda<span className="brand-dot">.</span></div>
-      <h2>{workspace?.name ?? 'Seu grupo'}</h2><div className="chat-channel-label">CANAIS DE TEXTO{workspace?.role === 'Owner' && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
+      {workspace?.isAdmin&&<button className="admin-entry" onClick={()=>setAdminOpen(true)}>Administrar servidor</button>}{adminOpen&&<AdminPanel close={()=>setAdminOpen(false)}/>}<label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label><h2>{workspace?.name ?? 'Seu grupo'}</h2><div className="chat-channel-label">CANAIS DE TEXTO{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
       {newChannel && <form className="channel-form" onSubmit={createChannel}><input autoFocus aria-label="Nome do canal" value={name} maxLength={80} onChange={e => setName(e.target.value)} /><button disabled={creating || !name.trim()}>Criar</button></form>}
-      <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={selected === item.id ? 'selected' : ''} aria-current={selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}</button>)}</nav>
+      <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={selected === item.id ? 'selected' : ''} aria-current={selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>)}</nav>
       <Voice presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} onChannel={setVoiceChannel} self={presence.find(p=>p.id===workspace?.userId)}/>
 
       </div><div ref={setDockHost} className="sidebar-footer"/>
     </aside>
-    <main className="chat-main"><div className="chat-account">{account}</div><div className={`live-status ${connection}`} role="status">{connection === 'connected' ? 'Conectado em tempo real' : connection === 'reconnecting' ? 'Reconectando… seu rascunho continua aqui.' : 'Tempo real indisponível. Tentando reconectar…'}</div>
+    <main className="chat-main"><div className="chat-account">{account}</div><div className={`live-status ${connection}`} role="status">{connection === 'connected' ? 'Conectado em tempo real' : connection === 'reconnecting' ? 'Reconectando… seu rascunho continua aqui.' : 'Tempo real indisponível. Tentando reconectar…'}{connection!=='connected'&&<button onClick={()=>void window.discorda?.reconnectLive()}>Reconectar chat</button>}</div>
       {error && <div className="chat-error" role="alert">{error} <button onClick={() => void load()}>Tentar novamente</button></div>}
       {voiceChannel&&<nav className="content-tabs" aria-label="Visualização"><button aria-pressed={!showMedia} onClick={()=>setShowMedia(false)}>Chat</button><button aria-pressed={showMedia} onClick={()=>setShowMedia(true)}>Chamada · {voiceChannel}</button></nav>}
       <div ref={setMediaHost} className="call-stage" hidden={!showMedia}/>
-      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
+      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation visible={!showMedia} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
     </main>
     <aside className="members-rail" aria-label="Membros disponíveis">
       {(['online','away','offline'] as const).map(status=>{
@@ -98,8 +105,10 @@ export function Chat({ account }: { account: ReactNode }) {
   </div>;
 }
 
-function Conversation({ channel, userId, drafts, pendingSends, presence }: { channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
+function Conversation({ channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const composer=useRef<HTMLTextAreaElement>(null);
+  const [emojis,setEmojis]=useState(false);
   const [draft, setDraft] = useState(drafts.get(channel.id) ?? '');
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
@@ -113,6 +122,9 @@ function Conversation({ channel, userId, drafts, pendingSends, presence }: { cha
   const alive = useRef(true);
   const list = useRef<HTMLDivElement>(null);
   const nearBottom = useRef(true);
+  const [atBottom,setAtBottom]=useState(true);
+  const readCallback=useRef(onRead);readCallback.current=onRead;
+  const visibleRef=useRef(visible);visibleRef.current=visible;
   const fetching = useRef(false);
   const initialLoaded = useRef(false);
   const currentMessages = useRef(messages); currentMessages.current = messages;
@@ -167,6 +179,7 @@ function Conversation({ channel, userId, drafts, pendingSends, presence }: { cha
     return () => { alive.current = false; off?.(); clearInterval(timer); void window.discorda?.liveActivity(channel.id, false); };
   }, []);
   useEffect(() => { if (nearBottom.current) list.current?.scrollTo({ top: list.current.scrollHeight }); }, [messages]);
+  useEffect(()=>{const mark=()=>{const last=currentMessages.current.at(-1);if(last&&visibleRef.current&&nearBottom.current&&document.visibilityState==='visible'&&document.hasFocus())readCallback.current(last.id);};mark();window.addEventListener('focus',mark);document.addEventListener('visibilitychange',mark);return()=>{window.removeEventListener('focus',mark);document.removeEventListener('visibilitychange',mark);};},[messages,visible,atBottom]);
   function changeDraft(value: string) { setDraft(value); drafts.set(channel.id, value); void window.discorda?.liveActivity(channel.id, value.trim().length > 0); }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); if (busy || !draft.trim()) return; setBusy(true); setError('');
@@ -179,7 +192,7 @@ function Conversation({ channel, userId, drafts, pendingSends, presence }: { cha
       if (!alive.current) return;
       nearBottom.current = true; setMessages(current => mergeMessages(current, [saved])); changeDraft(''); setEdit(undefined); setReply(undefined); setPending(undefined);
     } catch (e) { if (alive.current) setError(errorMessage(e)); }
-    finally { if (alive.current) setBusy(false); }
+    finally { if (alive.current) {setBusy(false);requestAnimationFrame(()=>composer.current?.focus());} }
   }
   async function remove(message: ChatMessage) {
     if (busy) return; setBusy(true);
@@ -188,8 +201,8 @@ function Conversation({ channel, userId, drafts, pendingSends, presence }: { cha
     finally { if (alive.current) setBusy(false); }
   }
   return <section className="conversation" aria-label={`Canal ${channel.name}`}>
-    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><span>Conversa do grupo</span></div>
-    <div className="message-list" ref={list} onScroll={() => { const node = list.current!; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80; }}>
+    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" aria-pressed={muted} onClick={toggleMuted}>{muted?'Ativar avisos deste canal':'Silenciar este canal'}</button></div>
+    <div className="message-list" ref={list} onScroll={() => { const node = list.current!; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;setAtBottom(nearBottom.current); }}>
       {hasMore && <button className="older-button" disabled={olderBusy || loading} onClick={() => { nearBottom.current = false; setOlderBusy(true); void history(messages[0]?.id); }}>Carregar anteriores</button>}
       {messages.length === 0 && <div className="chat-empty"><Hash size={42} /><h2>Bem-vindo a #{channel.name}</h2><p>{loading ? 'Carregando mensagens…' : 'A conversa começa com a primeira mensagem.'}</p></div>}
       {messages.map(message => <article className="chat-message" key={message.id} aria-label={`Mensagem de ${message.authorName}`}>
@@ -203,10 +216,11 @@ function Conversation({ channel, userId, drafts, pendingSends, presence }: { cha
       </article>)}
     </div>
     {error && <div className="chat-error" role="alert">{error} <button onClick={() => void history()}>Atualizar</button></div>}
-    <div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
+    <div className="recent-messages">{!atBottom&&<button onClick={()=>{nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
     <form className="message-composer" onSubmit={submit}>
       {(reply || edit) && <div className="composer-context">{edit ? 'Editando mensagem' : `Respondendo a ${reply?.authorName}`}<button type="button" disabled={busy || !!pending} aria-label="Cancelar resposta ou edição" onClick={() => { setReply(undefined); setEdit(undefined); changeDraft(''); }}><X size={14} /></button></div>}
-      <div className="composer-row"><textarea aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={draft} disabled={busy || !!pending} onChange={event => changeDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>
+      <div className="composer-row"><textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={draft} readOnly={busy || !!pending} onChange={event => changeDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button type="button" aria-label="Escolher emoji" aria-expanded={emojis} disabled={busy || !!pending} onClick={()=>setEmojis(!emojis)}><Smile size={20}/></button><button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>
+      {emojis&&<div className="emoji-picker" role="group" aria-label="Emojis" onKeyDown={e=>{if(e.key==='Escape'){setEmojis(false);composer.current?.focus();}}}>{['😀','😂','🥰','😎','🤔','😢','😮','👍','👎','👏','🙌','❤️','🔥','🎉','🎮','👀','✅','🚀'].map(emoji=><button key={emoji} type="button" aria-label={'Inserir '+emoji} onClick={()=>{const node=composer.current;const start=node?.selectionStart??draft.length,end=node?.selectionEnd??start;if(draft.length-(end-start)+emoji.length>4000)return;changeDraft(draft.slice(0,start)+emoji+draft.slice(end));setEmojis(false);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(start+emoji.length,start+emoji.length);});}}>{emoji}</button>)}</div>}
       <div className="composer-hint"><span>{pending ? 'Envio pendente: tente novamente para confirmar sem duplicar.' : 'Enter para enviar · Shift + Enter para nova linha · Emojis são bem-vindos 🙂'}</span><span>{draft.length}/4000</span></div>
     </form>
   </section>;

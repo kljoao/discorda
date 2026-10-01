@@ -1,4 +1,4 @@
-import type { RemoteAudioTrack } from 'livekit-client';
+import { Track, type RemoteAudioTrack } from 'livekit-client';
 import { playCallSound, type CallSound } from './call-sounds';
 export type MemberVolume={voice:number;screen:number};
 export const defaultVolume:MemberVolume={voice:150,screen:100};
@@ -17,9 +17,14 @@ export class VoicePlayback {
  attach(track:RemoteAudioTrack,element:HTMLAudioElement,volume:number){
   track.attach(element);element.muted=true;element.volume=0;
   const source=this.context.createMediaStreamSource(new MediaStream([track.mediaStreamTrack]));
-  const gain=this.context.createGain();gain.gain.value=clampVolume(volume)/100;source.connect(gain).connect(this.limiter);
+  const gain=this.context.createGain();gain.gain.value=clampVolume(volume)/100;const compressor=this.context.createDynamicsCompressor();
+  compressor.threshold.value=-24;compressor.knee.value=18;compressor.ratio.value=3;compressor.attack.value=.01;compressor.release.value=.2;
+  // Voice only: smooth loud peaks before the saved member gain. Shared music stays untouched.
+  const makeup=this.context.createGain();makeup.gain.value=1.5;
+  if(track.source===Track.Source.Microphone)source.connect(compressor).connect(makeup).connect(gain);else source.connect(gain);
+  gain.connect(this.limiter);
   void this.resume();
-  return {volume:(value:number)=>gain.gain.setTargetAtTime(clampVolume(value)/100,this.context.currentTime,.025),stop:()=>{source.disconnect();gain.disconnect();track.detach(element);}};
+  return {volume:(value:number)=>gain.gain.setTargetAtTime(clampVolume(value)/100,this.context.currentTime,.025),stop:()=>{source.disconnect();compressor.disconnect();makeup.disconnect();gain.disconnect();track.detach(element);}};
  }
  async close(){if(this.context.state!=='closed')await this.context.close();}
 }

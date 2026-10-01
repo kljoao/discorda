@@ -28,6 +28,7 @@ public static partial class AdminEndpoints
         var group = app.MapGroup("/api/v1/admin").RequireAuthorization("Member");
         group.AddEndpointFilter(async (context, next) => IsAdmin(context.HttpContext, app.Configuration)
             ? await next(context) : Results.Forbid());
+        group.MapGet("/capabilities", () => Results.Ok(new { administrator = true }));
         group.MapGet("/settings", (IConfiguration config) => Results.Ok(new {
             adminEmail = config["Admin:Email"], supabaseUrl = config["Supabase:Url"],
             hostIp = config["SelfHost:HostIp"], networkPolicyRequiresHostApply = true
@@ -42,14 +43,14 @@ public static partial class AdminEndpoints
                 return Results.BadRequest(new { error = "O administrador não pode bloquear a própria conta." });
             await WhitelistCommand.RunAsync(services, ["whitelist", change.Enabled ? "allow" : "block", change.Email]);
             return Results.NoContent();
-        });
+        }).RequireRateLimiting("admin-writes");
         group.MapGet("/network", (NetworkPolicy policy) => Results.Ok(policy.Read()));
         group.MapPut("/network", async (NetworkChange change, NetworkPolicy policy) => {
             if (change.Addresses is null || change.Addresses.Length > 100 || change.Addresses.Any(x => !IsRadminAddress(x)))
                 return Results.BadRequest(new { error = "Informe até 100 endereços IPv4 individuais do Radmin (26.x.x.x)." });
             await policy.SaveAsync(change.Addresses.Distinct().Order().ToArray());
             return Results.Ok(new { pendingHostApply = true });
-        });
+        }).RequireRateLimiting("admin-writes");
         group.MapGet("/network/script", (NetworkPolicy policy, IConfiguration config) => {
             var host = config["SelfHost:HostIp"] ?? "";
             if (!IsRadminAddress(host)) return Results.BadRequest();
@@ -80,7 +81,7 @@ public static partial class AdminEndpoints
             } catch (Exception ex) when (ex is HttpRequestException or TaskCanceledException) {
                 return Results.Problem("Não foi possível contatar o Supabase.", statusCode: 502);
             }
-        });
+        }).RequireRateLimiting("admin-writes");
     }
     public sealed record UserChange(string Email, bool Enabled);
     public sealed record NetworkChange(string[] Addresses);

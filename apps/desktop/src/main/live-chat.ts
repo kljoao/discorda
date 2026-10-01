@@ -4,6 +4,14 @@ import type { LiveEvent } from '../shared/ipc/contracts';
 export class LiveChatClient {
   private connection?: HubConnection;
   private wanted = false;
+  private restarting?: Promise<void>;
+  snapshot: {state:'connected'|'reconnecting'|'offline';attempts:number;lastConnected?:string}={state:'offline',attempts:0};
+  reconnect():Promise<void> {
+    if(!this.wanted)return Promise.resolve();
+    if(this.restarting)return this.restarting;
+    this.restarting=(async()=>{const old=this.connection;this.connection=undefined;await old?.stop().catch(()=>{});await this.starting;})().finally(()=>{this.restarting=undefined;if(this.wanted)void this.ensure();});
+    return this.restarting;
+  }
   private starting?: Promise<void>;
   private timer?: ReturnType<typeof setInterval>;
   private channel?: string;
@@ -17,17 +25,18 @@ export class LiveChatClient {
     if (this.connection?.state === HubConnectionState.Connected) this.status('connected');
     void this.ensure();
   }
-  private status(data: 'connected' | 'reconnecting' | 'offline') { this.emit({kind: 'connection', data}); }
+  private status(data: 'connected' | 'reconnecting' | 'offline') { this.snapshot.state=data;if(data==='connected')this.snapshot.lastConnected=new Date().toISOString();this.emit({kind: 'connection', data}); }
   private async ensure() {
-    if (!this.wanted || this.starting || !this.origin) return;
-    this.connection ??= this.create();
+    if (!this.wanted || this.starting || this.restarting || !this.origin) return;
+    try{this.connection ??= this.create();}catch{this.status('offline');return;}
     const connection = this.connection;
     if (connection.state !== HubConnectionState.Disconnected) return;
     this.status('reconnecting');
+    this.snapshot.attempts++;
     this.starting = connection.start().then(async () => {
       if (!this.wanted || this.connection !== connection) { await connection.stop(); return; }
       this.status('connected'); await this.pulse();
-    }).catch(() => { if (this.wanted) this.status('offline'); }).finally(() => { this.starting = undefined; });
+    }).catch(() => { if (this.wanted && this.connection===connection) this.status('offline'); }).finally(() => { this.starting = undefined; });
     await this.starting;
   }
   private create() {
@@ -37,8 +46,8 @@ export class LiveChatClient {
     connection.on('ChatEvent', (event: LiveEvent) => {
       if (this.wanted && this.connection === connection && ['message', 'presence', 'channels', 'profile', 'voice'].includes(event.kind)) this.emit(event);
     });
-    connection.onreconnecting(() => { if (this.wanted) this.status('reconnecting'); });
-    connection.onreconnected(() => { if (this.wanted) { this.status('connected'); void this.pulse(); } });
+    connection.onreconnecting(() => { if (this.wanted && this.connection===connection) this.status('reconnecting'); });
+    connection.onreconnected(() => { if (this.wanted && this.connection===connection) { this.status('connected'); void this.pulse(); } });
     connection.onclose(() => { if (this.wanted && this.connection === connection) this.status('offline'); });
     return connection;
   }

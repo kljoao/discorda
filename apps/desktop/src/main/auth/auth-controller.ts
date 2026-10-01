@@ -114,20 +114,20 @@ export class AuthController {
     return data.session.access_token;
   }
 
-  async chatRequest(route: string, method = 'GET', body?: unknown): Promise<ChatResult> {
+  async chatRequest(route: string, method = 'GET', body?: unknown, area:'chat'|'admin'='chat'): Promise<ChatResult> {
     const epoch = this.epoch;
     if (this.loggingOut || this.login) return { ok: false, message: 'Entre novamente para acessar o grupo.' };
     try {
       const client = await this.getClient();
       const { data, error } = await client.auth.getSession();
       if (error || !data.session || epoch !== this.epoch) return { ok: false, message: 'Entre novamente para acessar o grupo.' };
-      const response = await fetch(`${this.apiOrigin}/api/v1/chat${route}`, { method, body: body === undefined ? undefined : JSON.stringify(body),
+      const response = await fetch(`${this.apiOrigin}/api/v1/${area}${route}`, { method, body: body === undefined ? undefined : JSON.stringify(body),
         headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(12000) });
       if (epoch !== this.epoch) return { ok: false, message: 'A sessão foi encerrada.' };
       if (response.status === 401 || response.status === 403) return { ok: false, status:response.status, message: 'Acesso não autorizado. Verifique sua sessão.' };
       if (response.status === 409) return { ok: false, status:409, message: 'A mensagem mudou. Atualize o histórico e tente novamente.' };
       if (!response.ok) return { ok: false, status:response.status, message: 'Não foi possível concluir. Verifique os dados e tente novamente.' };
-      const result = await response.json();
+      const result = response.status===204 ? null : response.headers.get('content-type')?.includes('application/json') ? await response.json() : await response.text();
       return epoch === this.epoch ? { ok: true, data: result } : { ok: false, message: 'A sessão foi encerrada.' };
     } catch { return { ok: false, message: 'Sem conexão com o servidor. Seu texto foi preservado para tentar novamente.' }; }
   }

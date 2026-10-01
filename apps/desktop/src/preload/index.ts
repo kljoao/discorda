@@ -2,6 +2,10 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type DesktopApi } from '../shared/ipc/contracts';
 
 const api: DesktopApi = {
+  admin:action=>ipcRenderer.invoke(IPC.admin,action),
+  notifyMessage:channelId=>ipcRenderer.invoke(IPC.notifyMessage,channelId),
+  reconnectLive:()=>ipcRenderer.invoke(IPC.reconnectLive),
+  diagnostics:action=>ipcRenderer.invoke(IPC.diagnostics,action),
   updates:action=>ipcRenderer.invoke(IPC.updates,action),
   importServer:()=>ipcRenderer.invoke(IPC.importServer),
   connectServer:ip=>ipcRenderer.invoke(IPC.connectServer,ip),

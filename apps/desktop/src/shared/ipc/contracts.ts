@@ -1,4 +1,4 @@
-export interface UpdateState {status:'idle'|'checking'|'current'|'downloading'|'ready'|'error';version?:string;progress?:number;message?:string}
+export interface UpdateState {startupNotice?:string;status:'idle'|'checking'|'current'|'downloading'|'ready'|'error';version?:string;progress?:number;message?:string}
 export interface AppInfo {
   version: string;
   platform: string;
@@ -11,7 +11,13 @@ export interface ServiceStatus {
   checkedAt: string;
 }
 
+export interface DiagnosticReport {version:string;platform:string;checkedAt:string;api:ServiceStatus['api'];database:ServiceStatus['database'];chat:'connected'|'reconnecting'|'offline';attempts:number;lastConnected?:string;callActive:boolean;update:UpdateState['status'];}
+export type AdminAction={kind:'settings'|'users'|'network'|'firewall'}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
 export interface DesktopApi {
+  admin(action:AdminAction):Promise<ChatResult>;
+  notifyMessage(channelId:string):Promise<void>;
+  reconnectLive():Promise<void>;
+  diagnostics(action:'status'|'export'):Promise<DiagnosticReport>;
   updates(action:'status'|'check'|'install'):Promise<UpdateState>;
   importServer():Promise<boolean>;
   connectServer(ip:string):Promise<{ok:boolean;message?:string}>;
@@ -48,7 +54,7 @@ export const IPC = {
   audioStatus:'media:audio-status', devicePermissions:'media:permissions', audioApplications:'media:applications', applicationAudio:'media:application-audio', applicationAudioData:'media:audio-data', applicationAudioEnd:'media:audio-end',
   microphoneTest: 'media:test', media: 'media:action', captureSources: 'media:sources', selectCapture: 'media:select',
   updates:'app:updates',importServer:'app:import-server',connectServer:'app:connect-server',appInfo: 'app:info',
-  services: 'app:check-services',
+  services: 'app:check-services', admin:'admin:action',notifyMessage:'chat:notify', diagnostics:'app:diagnostics', reconnectLive:'live:reconnect',
   authState: 'auth:state',
   signIn: 'auth:sign-in',
   cancelSignIn: 'auth:cancel',
@@ -58,7 +64,7 @@ export const IPC = {
 } as const;
 
 export interface ChatMessage { id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
-export interface ChatWorkspace { id: string; name: string; userId: string; role: 'Owner' | 'Member'; channels: { id: string; name: string }[]; voiceChannels?: { id: string; name: string }[]; }
+export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string }[]; }
 export type ChatAction = { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }
   | { kind: 'history'; channelId: string; before?: string }
   | { kind: 'send'; channelId: string; clientId: string; body: string; replyToId?: string }

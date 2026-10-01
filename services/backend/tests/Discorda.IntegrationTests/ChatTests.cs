@@ -1,3 +1,5 @@
+using Microsoft.AspNetCore.Hosting;
+using Microsoft.Extensions.Configuration;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -11,9 +13,9 @@ namespace Discorda.IntegrationTests;
 
 public sealed class ChatTests(AuthFixture fixture) : IClassFixture<AuthFixture>
 {
-    private async Task<HttpClient> Member(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> app)
+    private async Task<HttpClient> Member(Microsoft.AspNetCore.Mvc.Testing.WebApplicationFactory<Program> app, string? configuredEmail = null)
     {
-        var subject = Guid.NewGuid(); var email = subject + "@example.test";
+        var subject = Guid.NewGuid(); var email = configuredEmail ?? subject + "@example.test";
         await using var db = fixture.Database(); db.AllowedUsers.Add(new AllowedUser { NormalizedEmail = email }); await db.SaveChangesAsync();
         var client = app.CreateClient();
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", fixture.Token(subject, Guid.NewGuid(), email));
@@ -75,7 +77,8 @@ public sealed class ChatTests(AuthFixture fixture) : IClassFixture<AuthFixture>
     [Fact]
     public async Task HistoryUsesStableCursorAndOwnerCanCreateChannel()
     {
-        await using var app = fixture.App(); using var client = await Member(app);
+        var admin=Guid.NewGuid()+"@example.test";
+        await using var app = fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=admin}))); using var client = await Member(app,admin);
         var workspace = (await client.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace"));
         var user = workspace.GetProperty("userId").GetGuid();
         await using var db = fixture.Database();

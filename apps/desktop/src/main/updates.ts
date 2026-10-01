@@ -1,3 +1,5 @@
+import {readFileSync,writeFileSync,unlinkSync} from 'node:fs';
+import path from 'node:path';
 import {app} from 'electron';
 import { autoUpdater, NsisUpdater } from 'electron-updater';
 import { updatePublicKey } from './update-key';
@@ -7,6 +9,14 @@ import type { UpdateState } from '../shared/ipc/contracts';
 export class Updates {
   state:UpdateState={status:'idle'};
   private checking=false;
+  private startupNotice?:string;
+  private marker=path.join(app.getPath('userData'),'update-pending.json');
+  confirmStartup(){
+    try{const marker=JSON.parse(readFileSync(this.marker,'utf8'));if(typeof marker.target==='string'&&/^\d+\.\d+\.\d+$/.test(marker.target)){
+      this.startupNotice=marker.target===app.getVersion()?'Atualização instalada e abertura confirmada.':'A atualização anterior não foi concluída. Verifique novamente ou reinstale pelo instalador oficial.';
+    }unlinkSync(this.marker);}catch{/* No pending update. */}
+  }
+  snapshot(){return {...this.state,startupNotice:this.startupNotice};}
   private release?:SignedRelease;
   private downloaded?:string;
   constructor(private callActive:()=>boolean){
@@ -24,7 +34,7 @@ export class Updates {
     this.checking=true;this.state={status:'checking'};
     try{
       const result=await autoUpdater.checkForUpdates();
-      if(!result||result.updateInfo.version===app.getVersion()){this.state={status:'current'};return;}
+      if(!result||!result.isUpdateAvailable||result.updateInfo.version===app.getVersion()){this.state={status:'current'};return;}
       const version=result.updateInfo.version;if(!/^\d+\.\d+\.\d+$/.test(version))throw new Error();
       const response=await fetch(`https://github.com/kljoao/discorda/releases/download/v${version}/discorda-update.json`,{signal:AbortSignal.timeout(15000)});
       if(!response.ok||Number(response.headers.get('content-length'))>8192)throw new Error();
@@ -40,6 +50,7 @@ export class Updates {
     if(this.state.status!=='ready'||!this.release||!this.downloaded)throw new Error('Nenhuma atualização pronta.');
     await verifyInstaller(this.downloaded,this.release);
     if(this.callActive())throw new Error('Saia da chamada antes de atualizar.');
+    writeFileSync(this.marker,JSON.stringify({target:this.release.version}),{mode:0o600});
     autoUpdater.quitAndInstall(false,true);
   }
 }

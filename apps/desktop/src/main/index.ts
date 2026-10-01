@@ -1,4 +1,6 @@
-import { app, dialog, BrowserWindow, ipcMain, net, protocol, session, powerMonitor } from 'electron';
+import {adminAction} from './admin';
+import { diagnosticReport } from './diagnostics';
+import { app, dialog, Notification, BrowserWindow, ipcMain, net, protocol, session, powerMonitor } from 'electron';
 import path from 'node:path';
 import { readFile,writeFile,mkdir } from 'node:fs/promises';
 import {Updates} from './updates';
@@ -31,16 +33,35 @@ else {
   app.on('second-instance', () => { window?.restore(); window?.focus(); });
   void app.whenReady().then(async () => {
     configureLanTrust();
+    let lastNotification=0;
+    ipcMain.handle(IPC.notifyMessage,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||typeof args[0]!=='string'||!/^[0-9a-f-]{36}$/i.test(args[0]))throw Error('IPC request rejected');
+      if(window?.isFocused()||Date.now()-lastNotification<5000||!Notification.isSupported())return;lastNotification=Date.now();
+      const notification=new Notification({title:'Discorda',body:'Nova mensagem no seu grupo.',silent:true});notification.on('click',()=>{window?.restore();window?.show();window?.focus();});notification.show();
+    });
     const auth = new AuthController(apiOrigin, new SessionVault(path.join(app.getPath('userData'), 'auth-session.enc')));
+    ipcMain.handle(IPC.admin,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');return adminAction(auth,args[0],window!);});
     const media = new MediaController(auth, () => window, development);
     const updates=new Updates(()=>media.callActive);
     const updateTimer=setTimeout(()=>void updates.check(),30000);const updateInterval=setInterval(()=>void updates.check(),4*60*60*1000);
     app.on('before-quit',()=>{clearTimeout(updateTimer);clearInterval(updateInterval);});
-    ipcMain.handle(IPC.updates,async(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||!['status','check','install'].includes(String(args[0])))throw new Error('IPC request rejected');if(args[0]==='check')void updates.check();if(args[0]==='install')await updates.install();return updates.state;});
+    ipcMain.handle(IPC.updates,async(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||!['status','check','install'].includes(String(args[0])))throw new Error('IPC request rejected');if(args[0]==='check')void updates.check();if(args[0]==='install')await updates.install();return updates.snapshot();});
     app.on("before-quit", () => { void media.stop(); });
     const live = new LiveChatClient(apiOrigin, () => auth.liveToken(), event => {
       if (window && !window.isDestroyed()) window.webContents.send(IPC.liveEvent, event);
     }, () => powerMonitor.getSystemIdleTime() >= 300);
+    powerMonitor.on('resume',()=>{void live.reconnect();});
+    ipcMain.handle(IPC.reconnectLive,(event,...args:unknown[])=>{assertSender(event,args);return live.reconnect();});
+    ipcMain.handle(IPC.diagnostics,async(event,...args:unknown[])=>{
+      assertSender(event,[]);if(args.length!==1||!['status','export'].includes(String(args[0])))throw new Error('IPC request rejected');
+      const health=await checkServices(apiOrigin);
+      // Explicit allowlist: never serialize configuration, exceptions, URLs or account data.
+      const report=diagnosticReport(app.getVersion(),process.platform,health,live.snapshot,media.callActive,updates.state.status);
+      if(args[0]==='export'){
+        const selection=await dialog.showSaveDialog(window!,{title:'Exportar diagnóstico privado',defaultPath:'discorda-diagnostico.json',filters:[{name:'JSON',extensions:['json']}]});
+        if(!selection.canceled&&selection.filePath)await writeFile(selection.filePath,JSON.stringify(report,null,2),'utf8');
+      }
+      return report;
+    });
     app.on('before-quit', () => { void live.stop(); });
     app.on('before-quit', () => auth.cancel());
     const root = path.join(__dirname, '../renderer');
@@ -67,6 +88,7 @@ else {
     let lastCheck = 0;
     ipcMain.handle(IPC.appInfo, (event, ...args: unknown[]) => {
       assertSender(event, args);
+      updates.confirmStartup();
       return { version: app.getVersion(), platform: process.platform,serverConfigured:!!apiOrigin };
     });
     let connectingServer=false;

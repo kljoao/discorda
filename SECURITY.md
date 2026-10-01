@@ -18,3 +18,9 @@ Não publique credenciais, e-mails de membros, IPs privados, arquivos de conexã
 Execute `npm run audit:source`, revise `git status --short` e os arquivos a publicar. O scanner é uma barreira auxiliar, não prova de ausência de segredos. Não force inclusão de arquivos ignorados. Não publique o diretório de trabalho como um ZIP completo. Testes usam credenciais fictícias; produção e backups ficam fora do código.
 
 As builds comunitárias desabilitam atualização oficial automática. Releases do mantenedor usam manifesto Ed25519 e hash do instalador; mantenha a chave privada fora do repositório e fora de pull requests. Assinatura de atualização não elimina avisos de SmartScreen.
+
+## Revisão de administração — 0.9
+
+Foram revisados os limites entre membro, administrador do grupo e operador local do host. A criação de canais passa a conferir o administrador configurado em cada requisição, removendo a autorização residual de um antigo Owner. A API limita o tamanho das requisições a 64 KiB no Kestrel e aplica limites de frequência às alterações administrativas, além do limite global. Tokens continuam no processo principal, sem acesso no renderer; operações administrativas usam uma lista explícita de ações IPC. Scripts de Firewall são salvos mediante escolha de arquivo, nunca executados remotamente.
+
+Testes cobrem membros recusados, tentativa de atribuir privilégios via payload, troca de administrador, entradas de rede inválidas, acesso não autenticado e preservação do banco na restauração. `npm audit --omit=dev` não apontou vulnerabilidades conhecidas na verificação desta versão; isso não garante ausência de falhas. Esta revisão não é um pentest independente. Regras antigas/amplas do Firewall, comprometimento da conta Google e administradores locais do host continuam sendo riscos que exigem controle operacional.
