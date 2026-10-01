@@ -61,12 +61,29 @@ public sealed class LiveChat(IHubContext<ChatHub> hub, IServiceScopeFactory scop
             logger.LogWarning("Live chat delivery unavailable ({ErrorType})", error.GetType().Name);
         }
     }
+    public async Task<PresenceMember[]> GetMembers(CancellationToken ct) => await Members(await Authorized(ct), ct);
+    private async Task<PresenceMember[]> Members(LivePeer[] targets, CancellationToken ct)
+    {
+            using var scope = scopes.CreateScope();
+            var db = scope.ServiceProvider.GetRequiredService<DiscordaDbContext>();
+            var members = await (from member in db.WorkspaceMembers
+                join user in db.Users on member.UserId equals user.Id
+                where member.WorkspaceId == ChatEndpoints.GroupId && user.LastSeenAt != null
+                    && db.AllowedUsers.Any(allowed => allowed.BoundUserId == user.Id && allowed.Enabled)
+                select new PresenceMember(user.Id, user.DisplayName, "offline", null, user.AvatarUrl))
+                .AsNoTracking().ToArrayAsync(ct);
+            var online = Snapshot(targets, clock.GetUtcNow()).ToDictionary(x => x.Id);
+            return members.Select(member => online.GetValueOrDefault(member.Id) ?? member)
+                .OrderBy(x => x.Name).ThenBy(x => x.Id).ToArray();
+    }
     public async Task SendPresence(CancellationToken ct = default)
     {
         try {
             var targets = await Authorized(ct);
-            if (targets.Length > 0) await hub.Clients.Clients(targets.Select(x => x.ConnectionId).ToArray())
-                .SendAsync("ChatEvent", new { kind = "presence", data = Snapshot(targets, clock.GetUtcNow()) }, ct);
+            if (targets.Length == 0) return;
+            var roster = await Members(targets, ct);
+            await hub.Clients.Clients(targets.Select(x => x.ConnectionId).ToArray())
+                .SendAsync("ChatEvent", new { kind = "presence", data = roster }, ct);
         } catch (Exception) when (!ct.IsCancellationRequested) {
             // Fail closed if authorization storage becomes unavailable.
             foreach (var peer in peers.Values) if (peers.TryRemove(peer.ConnectionId, out var removed)) removed.Abort();

@@ -66,7 +66,7 @@ test('development renderer loads through Vite with its development CSP', async (
     app = await electron.launch({ args: [path.resolve('.'), `--user-data-dir=${userData}`], env });
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
-    await expect(page.getByText('Desktop · v0.7.1')).toBeVisible();
+    await expect(page.getByText('Desktop · v0.7.2')).toBeVisible();
   } finally {
     await app?.close();
     await server.close();

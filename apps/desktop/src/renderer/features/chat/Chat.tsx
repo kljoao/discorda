@@ -28,11 +28,22 @@ export function Chat({ account }: { account: ReactNode }) {
   const [newChannel, setNewChannel] = useState(false);
   const [name, setName] = useState('');
   const [creating, setCreating] = useState(false);
+  const [membersState,setMembersState]=useState<'loading'|'ready'|'error'>('loading');
+  const membersRevision=useRef(0);
   const [presence, setPresence] = useState<PresenceMember[]>([]);
   const [connection, setConnection] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const drafts = useRef(new Map<string, string>());
   const pendingSends = useRef(new Map<string, Extract<ChatAction, { kind: 'send' }>>());
   const mounted = useRef(false);
+  async function loadMembers(){
+    const revision=++membersRevision.current;
+    try{
+      const members=await Promise.race([request<PresenceMember[]>({kind:'members'}),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Timeout')),10000))]);
+      if(!Array.isArray(members))throw new Error('Invalid members');
+      if(mounted.current&&revision===membersRevision.current){setPresence(members);setMembersState('ready');}
+    }catch{if(mounted.current&&revision===membersRevision.current)setMembersState('error');}
+  }
+  useEffect(()=>{if(!workspace)return;void loadMembers();const timer=setInterval(()=>void loadMembers(),15000);return()=>{clearInterval(timer);membersRevision.current++;};},[workspace?.id]);
   async function load(start = true) {
     try { const data = await request<ChatWorkspace>({ kind: 'workspace' }); if (!mounted.current) return; setWorkspace(data); setSelected(current => current ?? data.channels[0]?.id); setError(''); if (start) await window.discorda?.startLive(); }
     catch (e) { if (mounted.current) setError(errorMessage(e)); }
@@ -42,8 +53,8 @@ export function Chat({ account }: { account: ReactNode }) {
     let active = true;
     const off = window.discorda?.onLiveEvent(event => {
       if (!active) return;
-      if (event.kind === 'presence') setPresence(event.data);
-      if (event.kind === 'connection') { setConnection(event.data); if (event.data !== 'connected') setPresence([]); else void load(false); }
+      if (event.kind === 'presence') {membersRevision.current++;setPresence(event.data);setMembersState('ready');}
+      if (event.kind === 'connection') { setConnection(event.data); if (event.data !== 'connected') {setPresence([]);setMembersState('error');} else {void load(false);if(workspace)void loadMembers();} }
       if (event.kind === 'channels') void load();
     });
     void load();
@@ -70,7 +81,20 @@ export function Chat({ account }: { account: ReactNode }) {
       <div ref={setMediaHost} className="call-stage" hidden={!showMedia}/>
       <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
     </main>
-    <aside className="members-rail" aria-label="Membros disponíveis"><h2>Disponíveis — {presence.filter(p=>p.status==='online').length}</h2>{presence.filter(p=>p.status==='online').map(member=><div className="member-row" key={member.id}><div className="member-photo"><Avatar url={member.avatarUrl} name={member.name}/><span className="presence-dot"/></div><div><strong title={member.name}>{member.name}{member.id===workspace?.userId?' (você)':''}</strong><small>Disponível</small></div></div>)}{!!presence.filter(p=>p.status==='away').length&&<h2>Ausentes — {presence.filter(p=>p.status==='away').length}</h2>}{presence.filter(p=>p.status==='away').map(member=><div className="member-row away" key={member.id}><div className="member-photo"><Avatar url={member.avatarUrl} name={member.name}/><span className="presence-dot away"/></div><div><strong title={member.name}>{member.name}</strong><small>Ausente</small></div></div>)}{!presence.length&&<p className="members-empty">Aguardando membros…</p>}</aside>
+    <aside className="members-rail" aria-label="Membros disponíveis">
+      {(['online','away','offline'] as const).map(status=>{
+        const members=presence.filter(member=>member.status===status);
+        const label=status==='online'?'Disponíveis':status==='away'?'Ausentes':'Offline';
+        return (members.length>0||status==='online')&&<section key={status} aria-label={label}>
+          <h2>{label} — {members.length}</h2>
+          {members.map(member=><div className={'member-row '+status} key={member.id}>
+            <div className="member-photo"><Avatar url={member.avatarUrl} name={member.name}/><span className={'presence-dot '+status}/></div>
+            <div><strong title={member.name}>{member.name}{member.id===workspace?.userId?' (você)':''}</strong><small>{status==='online'?'Disponível':status==='away'?'Ausente':'Offline'}</small></div>
+          </div>)}
+        </section>;
+      })}
+      {membersState==='error'&&<div className="members-empty" role="status">Não foi possível atualizar a lista.<button onClick={()=>{setMembersState('loading');void loadMembers();}}>Tentar novamente</button></div>}{!presence.length&&membersState!=='error'&&<p className="members-empty">{membersState==='loading'?'Carregando membros…':'Nenhum membro para exibir.'}</p>}
+    </aside>
   </div>;
 }
 

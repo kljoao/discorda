@@ -13,6 +13,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       const channels = [{id: '225a47d7-779e-4992-89d2-03b1517f9112', name: 'geral'}];
       const messages: import('../../src/shared/ipc/contracts').ChatMessage[] = [];
       let dropResponse = true;
+      let memberFailure = true;
       const listeners = new Set<(event: import('../../src/shared/ipc/contracts').LiveEvent) => void>();
       window.addEventListener('test-live', event => listeners.forEach(listener => listener((event as CustomEvent).detail)));
       window.discorda = {
@@ -25,6 +26,8 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
         getAuthState: async () => ({status: 'signed-in', profile: {id: 'test-user', displayName, email: 'test@example.test'}}),
         signIn: async () => ({status: 'signed-out'}), signOut: async () => ({status: 'signed-out'}), cancelSignIn: async () => {},
         chat: async (action) => {
+          if (action.kind === 'members' && memberFailure) {memberFailure=false;return {ok:false,message:'Temporariamente indisponível'};}
+          if (action.kind === 'members') return {ok:true,data:[{id:'past-member',name:'Amigo offline',status:'offline',typingChannelId:null,avatarUrl:null}]};
           if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: 'Grupo de teste', role: 'Owner', userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
           if (action.kind === 'voiceRoster') return {ok:true,data:[{channelId:'bde069ed-d1c4-4930-92d3-9360eab43cb8',userId:'friend',name:'Amigo na voz'}]};
           if (action.kind === 'profile') {displayName=action.displayName;return {ok:true,data:{id:'test-user',displayName,email:'test@example.test'}};}
@@ -49,11 +52,23 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.goto('http://127.0.0.1:5183');
     await expect(page.getByRole('heading', {name: 'geral', exact: true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Canais de voz'}).getByText('Amigo na voz')).toBeVisible();
+    // Recover from failed initial fetch without a realtime presence event.
+    await expect(page.getByText('Não foi possível atualizar a lista.')).toBeVisible();
+    await page.getByRole('button',{name:'Tentar novamente',exact:true}).click();
+    await expect(page.getByRole('region',{name:'Offline',exact:true}).getByText('Amigo offline')).toBeVisible();
+    await page.screenshot({path:'test-results/offline-members.png',fullPage:true});
+    await page.evaluate(()=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'presence',data:[{id:'past-member',name:'Amigo offline',status:'online',typingChannelId:null,avatarUrl:null}]}})));
+    await expect(page.getByRole('region',{name:'Offline',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('region',{name:'Disponíveis',exact:true}).getByText('Amigo offline')).toBeVisible();
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:/Versão 9.0.0 pronta para instalar/}).click();
     await expect(page.getByRole('dialog',{name:'Configurações de microfone'})).toBeVisible();
     await expect(page.getByRole('button',{name:'Instalar e reiniciar'})).toBeVisible();
-    await page.getByRole('button',{name:'Fechar configurações'}).click();
+    await expect(page.getByRole('dialog').getByText('Versão instalada: test',{exact:true}).first()).toBeVisible();
+    await page.getByRole('button',{name:'Voz e microfone',exact:true}).click();
+    await expect(page.getByLabel('Volume de entrada',{exact:true})).toBeVisible();
+    await page.screenshot({path:'test-results/settings-redesign.png',fullPage:true});
+    await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:'Editar nome',exact:true}).click();
     await page.getByRole('textbox',{name:'Nome no Discorda'}).fill('Meu apelido');

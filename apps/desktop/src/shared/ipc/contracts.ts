@@ -59,13 +59,13 @@ export const IPC = {
 
 export interface ChatMessage { id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
 export interface ChatWorkspace { id: string; name: string; userId: string; role: 'Owner' | 'Member'; channels: { id: string; name: string }[]; voiceChannels?: { id: string; name: string }[]; }
-export type ChatAction = { kind: 'profile'; displayName: string } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }
+export type ChatAction = { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }
   | { kind: 'history'; channelId: string; before?: string }
   | { kind: 'send'; channelId: string; clientId: string; body: string; replyToId?: string }
   | { kind: 'edit'; channelId: string; id: string; version: number; body: string }
   | { kind: 'delete'; channelId: string; id: string; version: number };
 export type ChatResult = { ok: true; data: unknown } | { ok: false; message: string; status?:number };
-export interface PresenceMember { avatarUrl?:string|null; id: string; name: string; status: 'online' | 'away'; typingChannelId: string | null; }
+export interface PresenceMember { avatarUrl?:string|null; id: string; name: string; status: 'online' | 'away' | 'offline'; typingChannelId: string | null; }
 export interface VoiceMember { leaseId?:string; channelId: string; userId: string; name: string; }
 export type LiveEvent = {kind:'voice';data:{userId:string;leaseId:string;channelId:string;speaking:boolean}} | { kind: 'profile'; data: {userId: string; displayName: string} } | { kind: 'message'; data: ChatMessage } | {kind: 'channels'; data: {id: string}}
   | { kind: 'presence'; data: PresenceMember[] } | { kind: 'connection'; data: 'connected' | 'reconnecting' | 'offline' };

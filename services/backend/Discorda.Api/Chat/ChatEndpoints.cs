@@ -29,6 +29,9 @@ public static class ChatEndpoints
     public static void MapChat(this WebApplication app)
     {
         var api = app.MapGroup("/api/v1/chat").RequireAuthorization("Member");
+        api.MapGet("/members", async (HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
+            !await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == GroupId && m.UserId == UserId(ctx), ct)
+                ? Results.Forbid() : Results.Ok(await live.GetMembers(ct)));
         api.MapPut("/profile", async (EditProfile input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             var name = input.DisplayName?.Trim().Normalize();

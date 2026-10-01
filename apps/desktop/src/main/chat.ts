@@ -14,7 +14,7 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
     if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) return;
     throw new Error('Invalid link');
   }
-  if (a.kind === 'workspace' || a.kind === 'voiceRoster') return;
+  if (a.kind === 'members' || a.kind === 'workspace' || a.kind === 'voiceRoster') return;
   if (a.kind === 'profile' && text(a.displayName, 32)) return;
   if (a.kind === 'channel' && text(a.name, 80)) return;
   if (typeof a.channelId !== 'string' || !guid.test(a.channelId)) throw new Error('Invalid channel');
@@ -28,6 +28,7 @@ export async function chatAction(auth: AuthController, value: unknown): Promise<
   const action = value;
   if (action.kind === 'openLink') { await shell.openExternal(action.url); return { ok: true, data: null }; }
   if (action.kind === 'profile') return auth.chatRequest('/profile', 'PUT', {displayName: action.displayName});
+  if (action.kind === 'members') return auth.chatRequest('/members');
   if (action.kind === 'voiceRoster') return auth.chatRequest('/media/roster');
   if (action.kind === 'workspace') return auth.chatRequest('/workspace');
   if (action.kind === 'channel') return auth.chatRequest('/channels', 'POST', { name: action.name });

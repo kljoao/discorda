@@ -37,7 +37,7 @@ public sealed class LiveChatTests(AuthFixture fixture) : IClassFixture<AuthFixtu
         await first.StartAsync(); await second.StartAsync();
         await first.InvokeAsync("Pulse", General, true, false);
         var presence = await Wait(events.Reader, x => x.GetProperty("kind").GetString() == "presence" && x.GetProperty("data").EnumerateArray().Any(m => m.GetProperty("typingChannelId").ValueKind == JsonValueKind.String));
-        Assert.Single(presence.GetProperty("data").EnumerateArray()); // two connections, one member
+        Assert.Single(presence.GetProperty("data").EnumerateArray(), m => m.GetProperty("status").GetString() != "offline"); // two connections, one online member
         var sent = await http.PostAsJsonAsync($"/api/v1/chat/channels/{General}/messages", new SendMessage(Guid.NewGuid(), "live message", null)); sent.EnsureSuccessStatusCode();
         var message = await Wait(events.Reader, x => x.GetProperty("kind").GetString() == "message");
         var id = long.Parse(message.GetProperty("data").GetProperty("id").GetString()!);
@@ -73,6 +73,60 @@ public sealed class LiveChatTests(AuthFixture fixture) : IClassFixture<AuthFixtu
         Assert.Null(LiveChat.Snapshot([peer], now.AddSeconds(7))[0].TypingChannelId);
         Assert.Empty(LiveChat.Snapshot([peer], now.AddSeconds(46)));
         Assert.Empty(LiveChat.Snapshot([peer with { ExpiresAt = now.AddSeconds(-1) }], now));
+    }
+
+    [Fact]
+    public async Task RosterIncludesPastMembersButNotBlockedOrNeverJoinedUsers()
+    {
+        await using var app = fixture.App();
+        var email = Guid.NewGuid() + "@example.test";
+        var friendEmail = Guid.NewGuid() + "@example.test";
+        var invitedEmail = Guid.NewGuid() + "@example.test";
+        await using (var db = fixture.Database()) {
+            foreach (var address in new[] { email, friendEmail, invitedEmail })
+                db.AllowedUsers.Add(new AllowedUser { NormalizedEmail = address });
+            await db.SaveChangesAsync();
+        }
+        var token = fixture.Token(Guid.NewGuid(), Guid.NewGuid(), email);
+        var friendToken = fixture.Token(Guid.NewGuid(), Guid.NewGuid(), friendEmail);
+        using var http = app.CreateClient();
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", friendToken);
+        (await http.GetAsync("/api/v1/chat/workspace")).EnsureSuccessStatusCode();
+        Guid friendId;
+        await using (var db = fixture.Database()) {
+            var friend = await db.Users.SingleAsync(x => x.Email == friendEmail);
+            friendId = friend.Id;
+            friend.DisplayName = "Amigo offline";
+            friend.AvatarUrl = "https://lh3.googleusercontent.com/test-avatar";
+            await db.SaveChangesAsync();
+        }
+        http.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", token);
+        (await http.GetAsync("/api/v1/chat/workspace")).EnsureSuccessStatusCode();
+        var rosterResponse = await http.GetAsync("/api/v1/chat/members");
+        rosterResponse.EnsureSuccessStatusCode();
+        var roster = await rosterResponse.Content.ReadFromJsonAsync<PresenceMember[]>();
+        Assert.Contains(roster!, member => member.Id == friendId && member.Status == "offline");
+        await using var connection = new HubConnectionBuilder().WithUrl(new Uri(app.Server.BaseAddress, "/api/v1/live"), options => {
+            options.Transports = HttpTransportType.LongPolling;
+            options.HttpMessageHandlerFactory = _ => app.Server.CreateHandler();
+            options.AccessTokenProvider = () => Task.FromResult<string?>(token);
+        }).Build();
+        var events = Channel.CreateUnbounded<JsonElement>();
+        connection.On<JsonElement>("ChatEvent", item => events.Writer.TryWrite(item));
+        await connection.StartAsync();
+        var initial = await Wait(events.Reader, x => x.GetProperty("kind").GetString() == "presence" && x.GetProperty("data").EnumerateArray().Any(m => m.GetProperty("id").GetGuid() == friendId));
+        var offline = initial.GetProperty("data").EnumerateArray().Single(m => m.GetProperty("id").GetGuid() == friendId);
+        Assert.Equal("offline", offline.GetProperty("status").GetString());
+        Assert.Equal("Amigo offline", offline.GetProperty("name").GetString());
+        Assert.Equal("https://lh3.googleusercontent.com/test-avatar", offline.GetProperty("avatarUrl").GetString());
+        Assert.Equal(JsonValueKind.Null, offline.GetProperty("typingChannelId").ValueKind);
+        Assert.False(offline.TryGetProperty("email", out _));
+        await using (var db = fixture.Database()) {
+            Assert.False(await db.Users.AnyAsync(x => x.Email == invitedEmail));
+            await db.AllowedUsers.Where(x => x.NormalizedEmail == friendEmail).ExecuteUpdateAsync(set => set.SetProperty(x => x.Enabled, false));
+        }
+        await app.Services.GetRequiredService<LiveChat>().SendPresence();
+        await Wait(events.Reader, x => x.GetProperty("kind").GetString() == "presence" && !x.GetProperty("data").EnumerateArray().Any(m => m.GetProperty("id").GetGuid() == friendId));
     }
 
     private static async Task<JsonElement> Wait(ChannelReader<JsonElement> reader, Func<JsonElement, bool> predicate)
