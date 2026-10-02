@@ -1,3 +1,4 @@
+import {Shortcuts} from './shortcuts';
 import {adminAction} from './admin';
 import { diagnosticReport } from './diagnostics';
 import { app, dialog, Notification, BrowserWindow, ipcMain, net, protocol, session, powerMonitor } from 'electron';
@@ -40,11 +41,15 @@ else {
     });
     const auth = new AuthController(apiOrigin, new SessionVault(path.join(app.getPath('userData'), 'auth-session.enc')));
     ipcMain.handle(IPC.admin,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');return adminAction(auth,args[0],window!);});
+    const shortcuts=new Shortcuts(value=>{if(window&&!window.isDestroyed())window.webContents.send(IPC.shortcutEvent,value);});
+    ipcMain.handle(IPC.shortcuts,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');shortcuts.configure(args[0]);});
+    app.on('before-quit',()=>shortcuts.stop());
+    powerMonitor.on('suspend',()=>shortcuts.stop());
     const media = new MediaController(auth, () => window, development);
     const updates=new Updates(()=>media.callActive);
     const updateTimer=setTimeout(()=>void updates.check(),30000);const updateInterval=setInterval(()=>void updates.check(),4*60*60*1000);
     app.on('before-quit',()=>{clearTimeout(updateTimer);clearInterval(updateInterval);});
-    ipcMain.handle(IPC.updates,async(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||!['status','check','install'].includes(String(args[0])))throw new Error('IPC request rejected');if(args[0]==='check')void updates.check();if(args[0]==='install')await updates.install();return updates.snapshot();});
+    ipcMain.handle(IPC.updates,async(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||!['status','check','install','stable','beta'].includes(String(args[0])))throw new Error('IPC request rejected');if(args[0]==='stable'||args[0]==='beta')updates.setChannel(args[0]);if(args[0]==='check')void updates.check();if(args[0]==='install')await updates.install();return updates.snapshot();});
     app.on("before-quit", () => { void media.stop(); });
     const live = new LiveChatClient(apiOrigin, () => auth.liveToken(), event => {
       if (window && !window.isDestroyed()) window.webContents.send(IPC.liveEvent, event);
@@ -56,6 +61,7 @@ else {
       const health=await checkServices(apiOrigin);
       // Explicit allowlist: never serialize configuration, exceptions, URLs or account data.
       const report=diagnosticReport(app.getVersion(),process.platform,health,live.snapshot,media.callActive,updates.state.status);
+      const metrics=app.getAppMetrics();report.performance={cpuPercent:Math.round(metrics.reduce((sum,p)=>sum+p.cpu.percentCPUUsage,0)*10)/10,memoryMiB:Math.round(metrics.reduce((sum,p)=>sum+p.memory.workingSetSize,0)/1024),processes:metrics.length};
       if(args[0]==='export'){
         const selection=await dialog.showSaveDialog(window!,{title:'Exportar diagnóstico privado',defaultPath:'discorda-diagnostico.json',filters:[{name:'JSON',extensions:['json']}]});
         if(!selection.canceled&&selection.filePath)await writeFile(selection.filePath,JSON.stringify(report,null,2),'utf8');

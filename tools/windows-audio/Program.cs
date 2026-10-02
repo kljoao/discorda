@@ -3,6 +3,7 @@ using System.Runtime.InteropServices;
 using System.Text.Json;
 using ApplicationLoopback.NET;
 
+if (args.Length == 3 && args[0] == "ptt" && int.TryParse(args[1], out var parentPid) && int.TryParse(args[2], out var functionKey) && parentPid > 0 && OperatingSystem.IsWindows()) return await PushToTalk.Run(parentPid, functionKey);
 // Stdout for capture commands is exclusively float32 stereo PCM at 48 kHz.
 if (args.Length == 1 && args[0] == "status") { Console.Write(JsonSerializer.Serialize(new AudioStatus(OperatingSystem.IsWindowsVersionAtLeast(10,0,20348), Environment.OSVersion.Version.ToString()), AudioJson.Default.AudioStatus)); return 0; }
 if (!OperatingSystem.IsWindowsVersionAtLeast(10, 0, 20348)) { Console.Error.WriteLine("UNSUPPORTED_WINDOWS"); return 2; }

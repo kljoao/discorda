@@ -2,6 +2,8 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type DesktopApi } from '../shared/ipc/contracts';
 
 const api: DesktopApi = {
+  shortcuts:settings=>ipcRenderer.invoke(IPC.shortcuts,settings),
+  onShortcut:listener=>{const receive=(_event:Electron.IpcRendererEvent,value:'mute'|'unavailable'|boolean)=>listener(value);ipcRenderer.on(IPC.shortcutEvent,receive);return()=>ipcRenderer.removeListener(IPC.shortcutEvent,receive);},
   admin:action=>ipcRenderer.invoke(IPC.admin,action),
   notifyMessage:channelId=>ipcRenderer.invoke(IPC.notifyMessage,channelId),
   reconnectLive:()=>ipcRenderer.invoke(IPC.reconnectLive),

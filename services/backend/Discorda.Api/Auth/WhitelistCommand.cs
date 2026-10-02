@@ -1,4 +1,5 @@
 using System.Net.Mail;
+using Discorda.Core.Channels;
 using Discorda.Core.Users;
 using Discorda.Infrastructure.Persistence;
 using Microsoft.EntityFrameworkCore;
@@ -7,7 +8,7 @@ namespace Discorda.Api.Auth;
 
 public static class WhitelistCommand
 {
-    public static async Task<int> RunAsync(IServiceProvider services, string[] args)
+    public static async Task<int> RunAsync(IServiceProvider services, string[] args, Guid? actorId = null)
     {
         if (args.Length != 3 || args[1] is not ("allow" or "block") || !MailAddress.TryCreate(args[2], out var email)
             || email.Address != args[2] || args[2].Length > 320)
@@ -29,6 +30,7 @@ public static class WhitelistCommand
             await database.ApplicationSessions.Where(x => x.UserId == userId && x.RevokedAt == null)
                 .ExecuteUpdateAsync(setters => setters.SetProperty(x => x.RevokedAt, DateTimeOffset.UtcNow));
         database.AccessAudits.Add(new AccessAudit { Action = "whitelist." + args[1], TargetId = allowed.Id });
+        if (actorId is Guid actor) database.ManagementAudits.Add(new ManagementAudit { ActorId = actor, Action = allowed.Enabled ? "access.allow" : "access.block", Target = address });
         await database.SaveChangesAsync();
         await transaction.CommitAsync();
         Console.WriteLine("Whitelist updated. Existing revoked sessions remain revoked.");

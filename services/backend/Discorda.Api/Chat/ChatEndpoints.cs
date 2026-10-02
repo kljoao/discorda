@@ -1,3 +1,4 @@
+using Discorda.Api.Admin;
 using Discorda.Api.Auth;
 using Discorda.Core.Channels;
 using Discorda.Infrastructure.Persistence;
@@ -17,10 +18,10 @@ public static class ChatEndpoints
     public static readonly Guid GroupId = Guid.Parse("786f3c3b-14ca-4c93-b0a1-9f782ef8c044");
     private static Guid UserId(HttpContext context) => ((MemberProfile)context.Items[typeof(MemberProfile)]!).Id;
     private static bool ValidBody(string? body) => !string.IsNullOrWhiteSpace(body) && body.Length <= 4000 && !body.Contains('\0');
-    private static Task<bool> Access(DiscordaDbContext db, Guid channelId, Guid user, CancellationToken ct) =>
+    internal static Task<bool> Access(DiscordaDbContext db, Guid channelId, Guid user, CancellationToken ct) =>
         db.Channels.AnyAsync(c => c.Id == channelId && c.WorkspaceId == GroupId && c.Type == ChannelType.Text && c.ArchivedAt == null
             && db.WorkspaceMembers.Any(m => m.WorkspaceId == c.WorkspaceId && m.UserId == user), ct);
-    private static IQueryable<MessageView> Views(DiscordaDbContext db, System.Linq.Expressions.Expression<Func<Message, bool>> filter) => from message in db.Messages.AsNoTracking().Where(filter)
+    internal static IQueryable<MessageView> Views(DiscordaDbContext db, System.Linq.Expressions.Expression<Func<Message, bool>> filter) => from message in db.Messages.AsNoTracking().Where(filter)
         join author in db.Users on message.AuthorId equals author.Id
         select new MessageView(message.Id.ToString(), message.ChannelId, message.AuthorId, author.DisplayName, message.ClientId,
             message.DeletedAt == null ? message.Body : "", message.ReplyToId == null ? null : message.ReplyToId.ToString(),
@@ -61,17 +62,20 @@ public static class ChatEndpoints
             var channels = await db.Channels.Where(x => x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Text)
                 .OrderBy(x => x.SortOrder).ThenBy(x => x.Name).Select(x => new { x.Id, x.Name }).ToListAsync(ct);
             var voiceChannels = await db.Channels.Where(x => x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Voice).OrderBy(x => x.SortOrder).Select(x => new { x.Id, x.Name }).ToListAsync(ct);
-            var heads = await db.Messages.Where(m => db.Channels.Any(c => c.Id == m.ChannelId && c.WorkspaceId == GroupId)).GroupBy(m => m.ChannelId)
-                .Select(g => new { ChannelId = g.Key, LastId = g.Max(m => m.Id) }).ToDictionaryAsync(x => x.ChannelId, x => x.LastId.ToString(), ct);
-            return Results.Ok(new { workspace.Id, workspace.Name, isAdmin = Discorda.Api.Admin.AdminEndpoints.IsAdmin(ctx, app.Configuration), role = membership.Role.ToString(), userId = user, channels = channels.Select(c => new {c.Id,c.Name,lastMessageId=heads.GetValueOrDefault(c.Id)}), voiceChannels });
+            // One bounded index seek per channel, rather than scanning the complete message history.
+            var heads = await db.Channels.Where(c => c.WorkspaceId == GroupId && c.ArchivedAt == null && c.Type == ChannelType.Text)
+                .Select(c => new { c.Id, LastId = db.Messages.Where(m => m.ChannelId == c.Id).OrderByDescending(m => m.Id).Select(m => (long?)m.Id).FirstOrDefault() })
+                .ToDictionaryAsync(c => c.Id, c => c.LastId == null ? null : c.LastId.ToString(), ct);
+            var effectiveRole = await Permissions.Role(ctx, app.Configuration, db, ct);
+            return Results.Ok(new { workspace.Id, workspace.Name, isAdmin = Permissions.Rank(effectiveRole) >= 2, role = effectiveRole.ToString(), userId = user, channels = channels.Select(c => new {c.Id,c.Name,lastMessageId=heads.GetValueOrDefault(c.Id)}), voiceChannels });
         });
         api.MapPost("/channels", async (NewChannel input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
-            if (!Discorda.Api.Admin.AdminEndpoints.IsAdmin(ctx, app.Configuration)) return Results.Forbid();
+            if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 2) return Results.Forbid();
             var name = input.Name?.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || name.Any(char.IsControl)) return Results.BadRequest();
             var channel = new Channel { WorkspaceId = GroupId, Name = name, Type = ChannelType.Text, SortOrder = 10 };
-            db.Channels.Add(channel); await db.SaveChangesAsync(ct);
+            db.Channels.Add(channel); Permissions.Audit(db, ctx, "channel.create", channel.Id.ToString()); await db.SaveChangesAsync(ct);
             await live.Publish("channels", new { channel.Id });
             return Results.Ok(new { channel.Id, channel.Name });
         });
@@ -112,9 +116,13 @@ public static class ChatEndpoints
         api.MapDelete("/channels/{channelId:guid}/messages/{id:long}", async (Guid channelId, long id, long version, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             if (!await Access(db, channelId, UserId(ctx), ct)) return Results.NotFound();
-            var changed = await db.Messages.Where(x => x.Id == id && x.ChannelId == channelId && x.AuthorId == UserId(ctx) && x.DeletedAt == null && x.Version == version)
+            var moderator = Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) >= 1;
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            var changed = await db.Messages.Where(x => x.Id == id && x.ChannelId == channelId && (x.AuthorId == UserId(ctx) || moderator) && x.DeletedAt == null && x.Version == version)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Body, "").SetProperty(x => x.DeletedAt, DateTimeOffset.UtcNow).SetProperty(x => x.Version, x => x.Version + 1), ct);
             if (changed != 1) return Results.Conflict();
+            if (moderator) { Permissions.Audit(db, ctx, "message.delete", id.ToString()); await db.SaveChangesAsync(ct); }
+            await tx.CommitAsync(ct);
             var saved = await Views(db, x => x.Id == id).SingleAsync(ct);
             await live.Publish("message", saved);
             return Results.Ok(saved);

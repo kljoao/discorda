@@ -1,4 +1,4 @@
-$ErrorActionPreference = 'Stop'
+﻿$ErrorActionPreference = 'Stop'
 $root = Split-Path $PSScriptRoot -Parent
 $hostFile = Join-Path $root '.discorda/host.json'
 if (!(Test-Path -LiteralPath $hostFile)) { throw 'Configure .discorda/host.json com hostIp e peerIps antes de iniciar o piloto nativo.' }
@@ -11,6 +11,15 @@ if (!(Get-NetTCPConnection -LocalPort 7880 -State Listen -ErrorAction SilentlyCo
 }
 if (!(Get-NetTCPConnection -LocalPort 7443 -State Listen -ErrorAction SilentlyContinue)) {
     $env:ASPNETCORE_ENVIRONMENT = 'Development'
+    $apiProject=Join-Path $root 'services/backend/Discorda.Api'
+    & dotnet build $apiProject --nologo | Out-Null
+    if($LASTEXITCODE -ne 0){throw 'Falha ao compilar o servidor. Confira se não existe outra API em execução.'}
+    & dotnet run --no-build --project $apiProject -- migration-status | Out-Null
+    $migrationStatus=$LASTEXITCODE
+    if($migrationStatus -eq 10){
+        & (Join-Path $root 'tools/host-operations.ps1') -Action backup | Out-Null
+        & (Join-Path $root 'tools/migrate-native.ps1') | Out-Null
+    } elseif($migrationStatus -ne 0){throw 'Não foi possível verificar as migrações. Confira o banco de dados.'}
     Start-Process -FilePath 'dotnet' -ArgumentList @('run', '--no-build', '--project', ('"' + (Join-Path $root 'services/backend/Discorda.Api') + '"')) -WorkingDirectory $root -WindowStyle Hidden -RedirectStandardOutput (Join-Path $privateDir 'api-out.log') -RedirectStandardError (Join-Path $privateDir 'api-error.log') | Out-Null
 }
 Write-Output 'Servidor Discorda iniciado. Mantenha este PC e o Radmin ligados durante as chamadas.'

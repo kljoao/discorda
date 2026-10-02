@@ -56,3 +56,5 @@ window.stopProbe = async () => {
   await room?.disconnect();
   return localTracks.every((track) => track.readyState === 'ended');
 };
+
+window.reconnectProbe=()=>room.simulateScenario('signal-reconnect');

@@ -19,6 +19,16 @@ public sealed record VoiceMember(Guid ChannelId, Guid UserId, string Name, Guid 
 public sealed class MediaService(IConfiguration config, IServiceScopeFactory scopes, IHttpClientFactory clients, ILogger<MediaService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, MediaLease> leases = new();
+    private readonly ConcurrentDictionary<Guid, (DateTimeOffset Until, Guid? Channel)> moderation = new();
+    public bool AdmissionAllowed(Guid user, Guid channel) => !moderation.TryGetValue(user, out var entry) || entry.Until <= DateTimeOffset.UtcNow || entry.Channel == channel;
+    public async Task<bool> Moderate(Guid user, Guid? destination, CancellationToken ct)
+    {
+        if (!leases.TryRemove(user, out var lease)) return false;
+        moderation[user] = (DateTimeOffset.UtcNow.AddSeconds(60), destination);
+        try { await Rpc("RemoveParticipant", new { room = RoomName(lease.ChannelId), identity = lease.Id.ToString() }, new { room = RoomName(lease.ChannelId), roomAdmin = true }, ct); }
+        catch (HttpRequestException) { /* Reconciliation retries removal; admission is already revoked. */ }
+        return true;
+    }
     private VoiceMember[] roster = [];
     public VoiceMember[] Roster => Volatile.Read(ref roster).Where(member => leases.TryGetValue(member.UserId, out var lease) && lease.ChannelId == member.ChannelId && lease.Until > DateTimeOffset.UtcNow).ToArray();
     public bool Enabled => !string.IsNullOrEmpty(config["LiveKit:ApiSecret"]) && !string.IsNullOrEmpty(config["LiveKit:PublicUrl"]);
@@ -63,23 +73,29 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
     }
     private async Task Reconcile(CancellationToken ct)
     {
+        // Only revoke leases included in this authorization query. A concurrent join
+        // must not be judged against an older database snapshot.
+        var snapshot = leases.ToArray();
+        var checkedIds = snapshot.Select(x => x.Value.Id).ToHashSet();
         var valid = new HashSet<Guid>();
         var names = new Dictionary<Guid, string>();
         try
         {
             using var scope = scopes.CreateScope();
             var db = scope.ServiceProvider.GetRequiredService<DiscordaDbContext>();
-            var sessions = leases.Values.Select(x => x.SessionId).ToArray();
+            var sessions = snapshot.Select(x => x.Value.SessionId).ToArray();
             valid = (await (from s in db.ApplicationSessions join a in db.AllowedUsers on s.UserId equals a.BoundUserId
                 join m in db.WorkspaceMembers on s.UserId equals m.UserId
                 where sessions.Contains(s.Id) && s.RevokedAt == null && a.Enabled && m.WorkspaceId == ChatEndpoints.GroupId
                 select s.Id).ToArrayAsync(ct)).ToHashSet();
-            var users = leases.Keys.ToArray();
+            var users = snapshot.Select(x => x.Key).ToArray();
             names = await db.Users.Where(x => users.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
         }
         catch (Exception) when (!ct.IsCancellationRequested) { /* Fail closed on authorization storage failures. */ }
-        foreach (var entry in leases.Where(x => x.Value.Until <= DateTimeOffset.UtcNow || !valid.Contains(x.Value.SessionId)))
+        foreach (var entry in snapshot.Where(x => x.Value.Until <= DateTimeOffset.UtcNow || !valid.Contains(x.Value.SessionId)))
             ((ICollection<KeyValuePair<Guid, MediaLease>>)leases).Remove(entry);
+        foreach (var entry in moderation.Where(x => x.Value.Until <= DateTimeOffset.UtcNow)) ((ICollection<KeyValuePair<Guid, (DateTimeOffset Until, Guid? Channel)>>)moderation).Remove(entry);
+        var byLease = leases.Values.ToDictionary(x => x.Id);
         var rooms = await Rpc("ListRooms", new { }, new { roomList = true }, ct);
         var connected = new List<VoiceMember>();
         if (!rooms.TryGetProperty("rooms", out var items)) { Volatile.Write(ref roster, []); return; }
@@ -92,8 +108,9 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
             foreach (var participant in participants.EnumerateArray())
             {
                 var identity = participant.GetProperty("identity").GetString()!;
-                var lease = Guid.TryParse(identity, out var leaseId) ? leases.Values.FirstOrDefault(lease => lease.Id == leaseId && RoomName(lease.ChannelId) == name && lease.Until > DateTimeOffset.UtcNow && valid.Contains(lease.SessionId)) : null;
-                if (lease is not null && names.TryGetValue(lease.UserId, out var displayName))
+                var lease = Guid.TryParse(identity, out var leaseId) ? byLease.GetValueOrDefault(leaseId) : null;
+                if (lease is not null && !checkedIds.Contains(lease.Id)) continue;
+                if (lease is not null && RoomName(lease.ChannelId) == name && lease.Until > DateTimeOffset.UtcNow && valid.Contains(lease.SessionId) && names.TryGetValue(lease.UserId, out var displayName))
                 {
                     connected.Add(new(lease.ChannelId, lease.UserId, displayName, lease.Id));
                     if (!participant.TryGetProperty("name", out var currentName) || currentName.GetString() != displayName)
@@ -132,6 +149,7 @@ public static class MediaEndpoints
             if (!await db.Channels.AnyAsync(c => c.Id == command.ChannelId && c.Type == ChannelType.Voice && c.WorkspaceId == ChatEndpoints.GroupId && c.ArchivedAt == null
                 && db.WorkspaceMembers.Any(m => m.WorkspaceId == c.WorkspaceId && m.UserId == user.Id), ct)) return Results.NotFound();
             if (!media.Enabled) return Results.Problem(statusCode: 503, title: "Media server unavailable");
+            if (!media.AdmissionAllowed(user.Id, command.ChannelId)) return Results.Forbid();
             if (action == "pulse") return media.Pulse(user.Id, session, command) ? Results.Ok(new { }) : Results.Conflict();
             if (action != "join") return Results.BadRequest();
             try { return Results.Ok(await media.Join(user, session, command.ChannelId, ct)); }

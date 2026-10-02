@@ -54,10 +54,20 @@ builder.Services.AddRateLimiter(options =>
 });
 
 var app = builder.Build();
+if (args.FirstOrDefault() == "migration-status")
+{
+    await using var scope = app.Services.CreateAsyncScope();
+    Environment.ExitCode = (await scope.ServiceProvider.GetRequiredService<DiscordaDbContext>().Database.GetPendingMigrationsAsync()).Any() ? 10 : 0;
+    return;
+}
 if (args.FirstOrDefault() == "migrate")
 {
     await using var scope = app.Services.CreateAsyncScope();
-    await scope.ServiceProvider.GetRequiredService<DiscordaDbContext>().Database.MigrateAsync();
+    var database = scope.ServiceProvider.GetRequiredService<DiscordaDbContext>().Database;
+    var runtimeRole = app.Configuration["Migration:RuntimeRole"];
+    var grantSql = string.IsNullOrEmpty(runtimeRole) ? null : RuntimeDatabasePermissions.GrantSql(runtimeRole);
+    await database.MigrateAsync();
+    if (grantSql is not null) await database.ExecuteSqlRawAsync(grantSql);
     var email = app.Configuration["Admin:Email"];
     if (!string.IsNullOrWhiteSpace(email))
         Environment.ExitCode = await WhitelistCommand.RunAsync(app.Services, ["whitelist", "allow", email]);
@@ -100,6 +110,8 @@ if (app.Environment.IsDevelopment()) app.MapOpenApi().AllowAnonymous();
 app.MapDiscordaAuth();
 app.MapDiscordaAdmin();
 app.MapChat();
+app.MapChatFeatures();
+app.MapManagement();
 app.MapMedia();
 app.MapReverseProxy();
 app.MapHub<ChatHub>("/api/v1/live", options => options.CloseOnAuthenticationExpiration = true).RequireAuthorization("Member");

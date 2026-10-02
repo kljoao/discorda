@@ -5,6 +5,7 @@ using Microsoft.EntityFrameworkCore;
 using Microsoft.EntityFrameworkCore.Infrastructure;
 using Microsoft.EntityFrameworkCore.Storage.ValueConversion;
 using Npgsql.EntityFrameworkCore.PostgreSQL.Metadata;
+using NpgsqlTypes;
 
 #nullable disable
 
@@ -66,6 +67,55 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         });
                 });
 
+            modelBuilder.Entity("Discorda.Core.Channels.ChannelRead", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("MessageId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("UserId", "ChannelId");
+
+                    b.HasIndex("ChannelId");
+
+                    b.ToTable("channel_reads", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.ManagementAudit", b =>
+                {
+                    b.Property<long>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<long>("Id"));
+
+                    b.Property<string>("Action")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<Guid>("ActorId")
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Target")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("CreatedAt");
+
+                    b.ToTable("management_audit", "discorda");
+                });
+
             modelBuilder.Entity("Discorda.Core.Channels.Message", b =>
                 {
                     b.Property<long>("Id")
@@ -100,6 +150,11 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.Property<long?>("ReplyToId")
                         .HasColumnType("bigint");
 
+                    b.Property<NpgsqlTsVector>("SearchVector")
+                        .ValueGeneratedOnAddOrUpdate()
+                        .HasColumnType("tsvector")
+                        .HasComputedColumnSql("to_tsvector('portuguese', \"Body\")", true);
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
@@ -107,6 +162,10 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.HasKey("Id");
 
                     b.HasIndex("ReplyToId");
+
+                    b.HasIndex("SearchVector");
+
+                    NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("SearchVector"), "GIN");
 
                     b.HasIndex("AuthorId", "ClientId")
                         .IsUnique();
@@ -117,6 +176,43 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         {
                             t.HasCheckConstraint("ck_message_version", "\"Version\" > 0");
                         });
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.MessagePin", b =>
+                {
+                    b.Property<long>("MessageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("MessageId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("message_pins", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.MessageReaction", b =>
+                {
+                    b.Property<long>("MessageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Emoji")
+                        .HasMaxLength(16)
+                        .HasColumnType("character varying(16)");
+
+                    b.HasKey("MessageId", "UserId", "Emoji");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("message_reactions", "discorda");
                 });
 
             modelBuilder.Entity("Discorda.Core.Users.AccessAudit", b =>
@@ -289,7 +385,7 @@ namespace Discorda.Infrastructure.Persistence.Migrations
 
                     b.ToTable("workspace_members", "discorda", t =>
                         {
-                            t.HasCheckConstraint("ck_member_role", "\"Role\" IN ('Owner', 'Member')");
+                            t.HasCheckConstraint("ck_member_role", "\"Role\" IN ('Owner', 'Member', 'Admin', 'Moderator')");
                         });
                 });
 
@@ -299,6 +395,21 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("WorkspaceId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.ChannelRead", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Channel", null)
+                        .WithMany()
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 
@@ -320,6 +431,36 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ReplyToId")
                         .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.MessagePin", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.MessageReaction", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Discorda.Core.Users.AllowedUser", b =>

@@ -1,4 +1,4 @@
-﻿param([ValidateSet('status','start','stop','backup','restore','admin','readadmin')][string]$Action='status',[string]$Value)
+﻿param([ValidateSet('status','start','stop','backup','restore','admin','readadmin','verifybackup','schedule','unschedule')][string]$Action='status',[string]$Value)
 $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $selfHost=Test-Path -LiteralPath (Join-Path $root '.discorda/selfhost/compose.env')
@@ -17,8 +17,8 @@ function Container {
  if(!$selfHost){
   $configuration=Get-Content -LiteralPath $settingsPath -Raw|ConvertFrom-Json
   $builder=New-Object System.Data.Common.DbConnectionStringBuilder
-  $builder.ConnectionString=$configuration.'ConnectionStrings:Database'
-  if($builder['Host'] -notin @('127.0.0.1','localhost') -or [string]$builder['Port'] -ne '54322' -or $builder['Database'] -ne 'discorda' -or $builder['Username'] -ne 'discorda_dev'){throw 'Backup automático do piloto exige o PostgreSQL local padrão. Consulte o guia para bancos externos.'}
+  $builder.set_ConnectionString($configuration.'ConnectionStrings:Database')
+  if($builder.get_Item('Host') -notin @('127.0.0.1','localhost') -or [string]$builder.get_Item('Port') -ne '54322' -or $builder.get_Item('Database') -ne 'discorda' -or $builder.get_Item('Username') -ne 'discorda_dev'){throw 'Backup automático do piloto exige o PostgreSQL local padrão. Consulte o guia para bancos externos.'}
  }
  if($selfHost){$id=(Compose @('ps','-q','postgres')|Out-String).Trim()}else{$id=(Docker @('ps','--filter','label=com.docker.compose.project=discorda-dev','--filter','label=com.docker.compose.service=postgres','-q')|Out-String).Trim()}
  if($id -notmatch '^[a-f0-9]{12,64}$'){throw 'Banco Docker não encontrado ou há mais de uma instância.'};return $id
@@ -31,11 +31,15 @@ function ProtectFolder([string]$Path){
 }
 Set-Location -LiteralPath $root
 switch($Action){
- 'status' {if(Ready){'API e banco: disponíveis.'}else{'API ou banco indisponível.'};if($selfHost){Compose @('ps','--format','table {{.Service}}\t{{.State}}\t{{.Health}}')}else{'Modo: piloto nativo. Banco gerenciado pelo Docker Desktop.'};break}
+ 'verifybackup' {& (Join-Path $PSScriptRoot 'verify-backup.ps1') -Backup $Value;break}
+ 'schedule' {& (Join-Path $PSScriptRoot 'backup-schedule.ps1') -Action enable;break}
+ 'unschedule' {& (Join-Path $PSScriptRoot 'backup-schedule.ps1') -Action disable;break}
+ 'status' {& (Join-Path $PSScriptRoot 'backup-schedule.ps1') -Action status;$backupStatus=Join-Path $root '.discorda/backup-status.json';if(Test-Path -LiteralPath $backupStatus){$b=Get-Content -LiteralPath $backupStatus -Raw|ConvertFrom-Json;('Último backup automático: '+$b.status+' · '+$b.checkedAt);('Última restauração verificada: '+$b.lastVerified)};if(Ready){'API e banco: disponíveis.'}else{'API ou banco indisponível.'};if($selfHost){Compose @('ps','--format','table {{.Service}}\t{{.State}}\t{{.Health}}')}else{'Modo: piloto nativo. Banco gerenciado pelo Docker Desktop.'};break}
  'readadmin' {if(Test-Path -LiteralPath $settingsPath){$settings=Get-Content -LiteralPath $settingsPath -Raw|ConvertFrom-Json;if($selfHost){$settings.Admin.Email}else{$settings.'Admin:Email'}};break}
- 'start' {if($selfHost){Compose @('up','-d','--build')|Out-Null}else{$devId=(Docker @('ps','-a','--filter','label=com.docker.compose.project=discorda-dev','--filter','label=com.docker.compose.service=postgres','-q')|Out-String).Trim();if($devId -notmatch '^[a-f0-9]{12,64}$'){throw 'Configure o servidor primeiro pelo assistente setup-selfhost.ps1 ou pelo guia do piloto.'};Docker @('start',$devId)|Out-Null;if(!(Get-NetTCPConnection -LocalPort 5080 -State Listen -ErrorAction SilentlyContinue)){& dotnet build (Join-Path $root 'services/backend/Discorda.Api')|Out-Null;if($LASTEXITCODE -ne 0){throw 'Falha ao compilar a API.'}};& (Join-Path $root 'tools/start-radmin.ps1')|Out-Null};$ready=$false;for($i=0;$i -lt 20;$i++){if(Ready){$ready=$true;break};Start-Sleep -Seconds 2};if(!$ready){throw 'Serviços iniciados, mas a API/banco ainda não estão prontos.'};'Servidor pronto.';break}
+ 'start' {if($selfHost){Compose @('up','-d','--build')|Out-Null}else{$devId=(Docker @('ps','-a','--filter','label=com.docker.compose.project=discorda-dev','--filter','label=com.docker.compose.service=postgres','-q')|Out-String).Trim();if($devId -notmatch '^[a-f0-9]{12,64}$'){throw 'Configure o servidor primeiro pelo assistente setup-selfhost.ps1 ou pelo guia do piloto.'};Docker @('start',$devId)|Out-Null;& (Join-Path $root 'tools/start-radmin.ps1')|Out-Null};$ready=$false;for($i=0;$i -lt 20;$i++){if(Ready){$ready=$true;break};Start-Sleep -Seconds 2};if(!$ready){throw 'Serviços iniciados, mas a API/banco ainda não estão prontos.'};'Servidor pronto.';break}
  'stop' {if($selfHost){Compose @('stop')|Out-Null}else{StopNative};'Serviços parados. Dados preservados.';break}
  'backup' {
+  if(!$selfHost){$configuration=Get-Content -LiteralPath $settingsPath -Raw|ConvertFrom-Json;$probe=New-Object System.Data.Common.DbConnectionStringBuilder;$probe.set_ConnectionString($configuration.'ConnectionStrings:Database');if($probe.get_Item('Host') -notin @('127.0.0.1','localhost')){& (Join-Path $PSScriptRoot 'backup-external.ps1') -SettingsPath $settingsPath;break}}
   $id=Container;$dbUser=if($selfHost){'discorda'}else{'discorda_dev'}
   $folder=Join-Path $root ('.discorda/backups/'+[Guid]::NewGuid().ToString('N'));New-Item -ItemType Directory -Path $folder|Out-Null;ProtectFolder $folder
   $remote='/tmp/discorda-'+[Guid]::NewGuid().ToString('N')+'.dump'

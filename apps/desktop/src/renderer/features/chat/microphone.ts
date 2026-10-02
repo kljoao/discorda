@@ -1,5 +1,5 @@
 import type { AudioProcessorOptions, Track, TrackProcessor } from 'livekit-client';
-export interface MicrophoneSettings { noiseSuppression?:boolean; gain: number; threshold: number; gate: boolean; deviceId: string; }
+export interface MicrophoneSettings { pushToTalk?:boolean; noiseSuppression?:boolean; gain: number; threshold: number; gate: boolean; deviceId: string; }
 const defaults: MicrophoneSettings = {gain:1,threshold:-50,gate:true,noiseSuppression:true,deviceId:''};
 export function readMicrophoneSettings(): MicrophoneSettings {
   try { const value = JSON.parse(localStorage.getItem('discorda:microphone') ?? '{}');
@@ -18,6 +18,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   private destination?: MediaStreamAudioDestinationNode;
   onLevel?: (level: {db:number;open:boolean}) => void;
   constructor(public settings: MicrophoneSettings) {}
+  talk(pressed:boolean){this.node?.port.postMessage({talk:pressed});}
   configure(settings: MicrophoneSettings) { this.settings = settings; this.node?.port.postMessage(settings); }
   async init({audioContext,track}: AudioProcessorOptions) {
     let loaded = modules.get(audioContext);

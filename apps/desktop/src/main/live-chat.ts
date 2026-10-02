@@ -44,7 +44,7 @@ export class LiveChatClient {
       accessTokenFactory: this.token, transport: HttpTransportType.WebSockets, skipNegotiation: true,
     }).configureLogging(LogLevel.None).withAutomaticReconnect([0, 2000, 5000, 10000]).build();
     connection.on('ChatEvent', (event: LiveEvent) => {
-      if (this.wanted && this.connection === connection && ['message', 'presence', 'channels', 'profile', 'voice'].includes(event.kind)) this.emit(event);
+      if (this.wanted && this.connection === connection && ['message', 'presence', 'channels', 'profile', 'voice', 'annotations', 'moderation'].includes(event.kind)) this.emit(event);
     });
     connection.onreconnecting(() => { if (this.wanted && this.connection===connection) this.status('reconnecting'); });
     connection.onreconnected(() => { if (this.wanted && this.connection===connection) { this.status('connected'); void this.pulse(); } });

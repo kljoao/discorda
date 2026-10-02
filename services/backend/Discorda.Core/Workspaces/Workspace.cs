@@ -7,7 +7,7 @@ public sealed class Workspace
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;
 }
 
-public enum MemberRole { Owner, Member }
+public enum MemberRole { Owner, Member, Admin, Moderator }
 
 public sealed class WorkspaceMember
 {

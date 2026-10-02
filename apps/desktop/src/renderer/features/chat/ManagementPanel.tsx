@@ -1,0 +1,29 @@
+import {createPortal} from 'react-dom';
+import {useEffect,useRef,useState} from 'react';
+import {chatRequest} from './ChatTools';
+import {AdminPanel} from './AdminPanel';
+import type {ChatWorkspace} from '../../../shared/ipc/contracts';
+
+type Member={id:string;displayName:string;role:ChatWorkspace['role']};
+type Audit={id:string;actorId:string;action:string;target:string;createdAt:string};
+const rank={Owner:3,Admin:2,Moderator:1,Member:0};
+const labels={Owner:'Proprietário',Admin:'Administrador',Moderator:'Moderador',Member:'Membro'};
+export function ManagementPanel({workspace,close}:{workspace:ChatWorkspace;close:()=>void}){
+  const confirmationRef=useRef<HTMLElement>(null),previousAction=useRef<HTMLElement|null>(null);
+  const dialog=useRef<HTMLDialogElement>(null),[members,setMembers]=useState<Member[]>([]),[audit,setAudit]=useState<Audit[]>([]),[busy,setBusy]=useState(false),[error,setError]=useState(''),[host,setHost]=useState(false),[confirmation,setConfirmation]=useState<{userId:string;name:string;destination:string}>();
+  async function run(action:()=>Promise<void>){setBusy(true);setError('');try{await action();}catch(e){setError(e instanceof Error?e.message:'Não foi possível concluir.');}finally{setBusy(false);}}
+  async function load(){setMembers(await chatRequest<Member[]>({kind:'manageMembers'}));if(rank[workspace.role]>=2)setAudit(await chatRequest<Audit[]>({kind:'audit'}));}
+  useEffect(()=>{const previous=document.activeElement;const node=dialog.current;node?.showModal();void run(load);return()=>{node?.close();if(previous instanceof HTMLElement&&previous.isConnected)previous.focus();};},[]);
+  useEffect(()=>{if(confirmation){confirmationRef.current?.focus();}else previousAction.current?.focus();},[confirmation]);
+  const names=new Map(members.map(m=>[m.id,m.displayName]));
+  return createPortal(<dialog className="management-dialog" ref={dialog} aria-label="Gerenciar grupo" onCancel={close}><header><div><h2>Gerenciar grupo</h2><p>Seu cargo: {labels[workspace.role]}</p></div><button onClick={close}>Fechar</button></header>
+    <p>Moderadores cuidam de mensagens e chamadas. Administradores também criam canais e gerenciam cargos inferiores. O proprietário é definido no computador servidor.</p>
+    <section><h3>Pessoas e permissões</h3>{busy&&!members.length&&<p role="status">Carregando pessoas…</p>}{members.map(member=><div className="management-member" key={member.id}><strong>{member.displayName}</strong><span>{labels[member.role]}</span>
+      {rank[workspace.role]>=2&&rank[member.role]<rank[workspace.role]&&member.id!==workspace.userId&&<label>Cargo<select aria-label={'Cargo de '+member.displayName} disabled={busy} value={member.role} onChange={e=>{const role=e.target.value as 'Admin'|'Moderator'|'Member';void run(async()=>{await chatRequest({kind:'role',userId:member.id,role});await load();});}}>{(['Member','Moderator','Admin'] as const).filter(r=>rank[r]<rank[workspace.role]).map(r=><option key={r} value={r}>{labels[r]}</option>)}</select></label>}
+      {rank[member.role]<rank[workspace.role]&&member.id!==workspace.userId&&<label>Na chamada<select aria-label={'Mover ou remover '+member.displayName} disabled={busy} value="" onChange={e=>{const destination=e.target.value;previousAction.current=e.currentTarget;setConfirmation({userId:member.id,name:member.displayName,destination});}}><option value="">Escolher ação…</option>{workspace.voiceChannels?.map(c=><option key={c.id} value={c.id}>Mover para {c.name}</option>)}<option value="remove">Remover da chamada</option></select></label>}
+    </div>)}</section>
+    {confirmation&&<section ref={confirmationRef} tabIndex={-1} className="moderation-confirm" aria-label="Confirmar ação na chamada"><h3>{confirmation.destination==='remove'?'Remover da chamada':'Mover para outra sala'}</h3><p>{confirmation.destination==='remove'?`Remover ${confirmation.name} da chamada atual?`:`Mover ${confirmation.name} para ${workspace.voiceChannels?.find(c=>c.id===confirmation.destination)?.name??'a sala escolhida'}?`}</p><button disabled={busy} onClick={()=>void run(async()=>{await chatRequest({kind:'moderateVoice',userId:confirmation.userId,channelId:confirmation.destination==='remove'?undefined:confirmation.destination});setConfirmation(undefined);})}>Confirmar</button><button disabled={busy} onClick={()=>setConfirmation(undefined)}>Cancelar</button></section>}
+    {workspace.role==='Owner'&&<section><h3>Configuração privada</h3><button onClick={()=>setHost(true)}>Acessos e rede do servidor</button></section>}
+    {rank[workspace.role]>=2&&<section><h3>Registro administrativo</h3><p>Sem conteúdo de mensagens ou credenciais.</p>{!busy&&!audit.length&&!error&&<p>Nenhuma ação registrada ainda.</p>}<ol className="audit-list">{audit.map(a=><li key={a.id}><time>{new Date(a.createdAt).toLocaleString('pt-BR')}</time><span>{names.get(a.actorId)??'Administrador'} · {a.action}</span><small>{names.get(a.target)??a.target}</small></li>)}</ol>{audit.length>0&&<button disabled={busy} onClick={()=>void run(async()=>{const page=await chatRequest<Audit[]>({kind:'audit',before:audit.at(-1)!.id});setAudit(old=>[...old,...page]);})}>Registros anteriores</button>}</section>}
+    <p role="status">{busy?'Processando…':error}</p>{host&&<AdminPanel close={()=>setHost(false)}/>}</dialog>,document.body);
+}

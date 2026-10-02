@@ -3,7 +3,7 @@ const f=vi.hoisted(()=>({files:new Map<string,string>(),version:'1.0.0',availabl
 vi.mock('electron',()=>({app:{isPackaged:true,getVersion:()=>f.version,getPath:()=>'/test'}}));
 vi.mock('node:fs',()=>({readFileSync:(path:string)=>{if(!f.files.has(path))throw Error();return f.files.get(path);},writeFileSync:(path:string,value:string)=>f.files.set(path,value),unlinkSync:(path:string)=>f.files.delete(path)}));
 vi.mock('electron-updater',()=>({NsisUpdater:class{},autoUpdater:{on:(name:string,callback:Function)=>f.events.set(name,callback),checkForUpdates:async()=>({isUpdateAvailable:f.available,updateInfo:{version:'1.1.0'}}),downloadUpdate:()=>f.download(),quitAndInstall:()=>f.install()}}));
-vi.mock('../../src/main/update-verification',()=>({verifyRelease:()=>({version:'1.1.0'}),verifyInstaller:async()=>{}}));
+vi.mock('../../src/main/update-verification',()=>({releaseVersion:/^\d+\.\d+\.\d+(?:-beta\.\d+)?$/,verifyRelease:()=>({version:'1.1.0'}),verifyInstaller:async()=>{}}));
 import {Updates} from '../../src/main/updates';
 beforeEach(()=>{f.available=true;f.files.clear();f.events.clear();f.install.mockClear();f.version='1.0.0';vi.stubEnv('DISCORDA_OFFICIAL_RELEASE','1');vi.stubGlobal('fetch',async()=>new Response('{}'));f.download.mockImplementation(async()=>{f.events.get('update-downloaded')?.({downloadedFile:'installer.exe'});});});
 it('blocks installation in a call and confirms the new renderer startup',async()=>{

@@ -36,19 +36,20 @@ public static partial class AdminEndpoints
         group.MapGet("/users", async (DiscordaDbContext db, CancellationToken ct) =>
             Results.Ok(await db.AllowedUsers.OrderBy(x => x.NormalizedEmail)
                 .Select(x => new { email = x.NormalizedEmail, enabled = x.Enabled }).ToArrayAsync(ct)));
-        group.MapPut("/users", async (UserChange change, IServiceProvider services, IConfiguration config) => {
+        group.MapPut("/users", async (UserChange change, IServiceProvider services, IConfiguration config, HttpContext ctx) => {
             if (!MailAddress.TryCreate(change.Email, out var address) || address.Address != change.Email || change.Email.Length > 320)
                 return Results.BadRequest(new { error = "E-mail inválido." });
             if (!change.Enabled && string.Equals(change.Email, config["Admin:Email"], StringComparison.OrdinalIgnoreCase))
                 return Results.BadRequest(new { error = "O administrador não pode bloquear a própria conta." });
-            await WhitelistCommand.RunAsync(services, ["whitelist", change.Enabled ? "allow" : "block", change.Email]);
+            await WhitelistCommand.RunAsync(services, ["whitelist", change.Enabled ? "allow" : "block", change.Email], Permissions.User(ctx));
             return Results.NoContent();
         }).RequireRateLimiting("admin-writes");
         group.MapGet("/network", (NetworkPolicy policy) => Results.Ok(policy.Read()));
-        group.MapPut("/network", async (NetworkChange change, NetworkPolicy policy) => {
+        group.MapPut("/network", async (NetworkChange change, NetworkPolicy policy, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) => {
             if (change.Addresses is null || change.Addresses.Length > 100 || change.Addresses.Any(x => !IsRadminAddress(x)))
                 return Results.BadRequest(new { error = "Informe até 100 endereços IPv4 individuais do Radmin (26.x.x.x)." });
             await policy.SaveAsync(change.Addresses.Distinct().Order().ToArray());
+            Permissions.Audit(db, ctx, "network.update", "network-policy"); await db.SaveChangesAsync(ct);
             return Results.Ok(new { pendingHostApply = true });
         }).RequireRateLimiting("admin-writes");
         group.MapGet("/network/script", (NetworkPolicy policy, IConfiguration config) => {

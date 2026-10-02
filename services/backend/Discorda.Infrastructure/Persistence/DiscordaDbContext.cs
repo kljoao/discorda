@@ -16,13 +16,41 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
     public DbSet<Channel> Channels => Set<Channel>();
     public DbSet<Message> Messages => Set<Message>();
 
+    public DbSet<MessageReaction> MessageReactions => Set<MessageReaction>();
+    public DbSet<MessagePin> MessagePins => Set<MessagePin>();
+    public DbSet<ChannelRead> ChannelReads => Set<ChannelRead>();
+    public DbSet<ManagementAudit> ManagementAudits => Set<ManagementAudit>();
+
     protected override void OnModelCreating(ModelBuilder model)
     {
         model.HasDefaultSchema("discorda");
+        model.Entity<MessageReaction>(e => {
+            e.ToTable("message_reactions"); e.HasKey(x => new { x.MessageId, x.UserId, x.Emoji });
+            e.Property(x => x.Emoji).HasMaxLength(16);
+            e.HasOne<Message>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<MessagePin>(e => {
+            e.ToTable("message_pins"); e.HasKey(x => x.MessageId);
+            e.HasOne<Message>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
+        });
+        model.Entity<ChannelRead>(e => {
+            e.ToTable("channel_reads"); e.HasKey(x => new { x.UserId, x.ChannelId });
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Channel>().WithMany().HasForeignKey(x => x.ChannelId).OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<ManagementAudit>(e => {
+            e.ToTable("management_audit"); e.HasKey(x => x.Id);
+            e.Property(x => x.Action).HasMaxLength(40); e.Property(x => x.Target).HasMaxLength(320);
+            e.HasIndex(x => x.CreatedAt);
+        });
         model.Entity<Message>(entity =>
         {
             entity.ToTable("messages", table => table.HasCheckConstraint("ck_message_version", "\"Version\" > 0"));
             entity.HasKey(x => x.Id);
+            entity.Property<NpgsqlTypes.NpgsqlTsVector>("SearchVector").HasComputedColumnSql("to_tsvector('portuguese', \"Body\")", stored: true);
+            entity.HasIndex("SearchVector").HasMethod("GIN");
             entity.Property(x => x.Body).HasMaxLength(4000);
             entity.Property(x => x.Version).IsConcurrencyToken();
             entity.HasIndex(x => new { x.ChannelId, x.Id });
@@ -72,7 +100,7 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
         });
         model.Entity<WorkspaceMember>(entity =>
         {
-            entity.ToTable("workspace_members", table => table.HasCheckConstraint("ck_member_role", "\"Role\" IN ('Owner', 'Member')"));
+            entity.ToTable("workspace_members", table => table.HasCheckConstraint("ck_member_role", "\"Role\" IN ('Owner', 'Member', 'Admin', 'Moderator')"));
             entity.HasKey(x => new { x.WorkspaceId, x.UserId });
             entity.Property(x => x.Role).HasConversion<string>().HasMaxLength(16);
             entity.HasOne<Workspace>().WithMany().HasForeignKey(x => x.WorkspaceId).OnDelete(DeleteBehavior.Restrict);

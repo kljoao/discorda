@@ -10,6 +10,8 @@ import { chromium } from '@playwright/test';
 import { AccessToken, RoomServiceClient } from 'livekit-server-sdk';
 
 // Standalone loopback lab. Never accepts production URLs, API keys or user tokens.
+const soakMinutes=Number(process.argv.find(arg=>arg.startsWith('--soak-minutes='))?.split('=')[1]??0);
+if(!Number.isFinite(soakMinutes)||soakMinutes<0||soakMinutes>240)throw Error('Use --soak-minutes between 0 and 240.');
 const root = fileURLToPath(new URL('../../', import.meta.url));
 const directory = path.join(root, 'artifacts/media-lab');
 await mkdir(directory, { recursive: true });
@@ -114,7 +116,7 @@ try {
     const page = await context.newPage();
 
     await page.goto(`http://127.0.0.1:${http.address().port}`);
-    const token = new AccessToken(key, secret, { identity: `synthetic-${index}`, ttl: '2m' });
+    const token = new AccessToken(key, secret, { identity: `synthetic-${index}`, ttl: '5h' });
     token.addGrant({ roomJoin: true, room: roomName, canPublish: true, canSubscribe: true, canPublishData: false });
     await page.evaluate((params) => window.startProbe(params), { url: 'ws://127.0.0.1:17880', token: await token.toJwt(), color });
     pages.push(page);
@@ -126,9 +128,17 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   if (!samples.every((sample) => sample.audioBytes > 1000 && sample.videoBytes > 1000 && sample.framesDecoded > 10)) throw new Error(`Bidirectional media failed: ${JSON.stringify(samples)}`);
+  const soakStart=Date.now();let checkpoints=0;let baseline=samples;
+  if(soakMinutes>0)await pages[0].evaluate(()=>window.reconnectProbe());
+  while(Date.now()-soakStart<soakMinutes*60000){
+    await new Promise(resolve=>setTimeout(resolve,10000));
+    samples=await Promise.all(pages.map(page=>page.evaluate(()=>window.probeStats())));
+    if(!samples.every((sample,i)=>sample.participants===1&&sample.audioBytes>baseline[i].audioBytes&&sample.framesDecoded>baseline[i].framesDecoded))throw Error('Soak media stopped advancing.');
+    baseline=samples;checkpoints++;console.log('Soak checkpoint '+checkpoints+': bidirectional media advancing.');
+  }
   const stopped = await Promise.all(pages.map((page) => page.evaluate(() => window.stopProbe())));
   if (!stopped.every(Boolean)) throw new Error('A synthetic capture track remained active after disconnect.');
-  const result = { testedAt: new Date().toISOString(), server: '1.13.7', scope: 'loopback synthetic audio/video, two isolated browser contexts', samples, allTracksStopped: true, externalNetworksValidated: false, turnTlsValidated: false, physicalCaptureValidated: false };
+  const result = { testedAt: new Date().toISOString(), server: '1.13.7', soakMinutes, checkpoints, signalingReconnectExercised:soakMinutes>0, scope: 'loopback synthetic audio/video, two isolated browser contexts', samples, allTracksStopped: true, externalNetworksValidated: false, turnTlsValidated: false, physicalCaptureValidated: false };
   await writeFile(path.join(directory, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   await service.deleteRoom(roomName);
