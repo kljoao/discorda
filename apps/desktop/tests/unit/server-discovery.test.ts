@@ -4,7 +4,7 @@ import path from 'node:path';
 import os from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {createServer,connect} from 'node:tls';
-import {normalizeRadminIp,readServerCertificate} from '../../src/main/server-discovery';
+import {normalizeRadminIp,normalizeServerAddress,readServerCertificate} from '../../src/main/server-discovery';
 import {parseServerConfig} from '../../src/main/server-config';
 let directory:string,certificate:string,key:string;
 beforeAll(()=>{
@@ -18,6 +18,13 @@ it('accepts only explicit Radmin IPv4, not URLs, hostnames or ports',()=>{
  expect(normalizeRadminIp(' 26.10.10.1 ')).toBe('26.10.10.1');
  for(const input of ['127.0.0.1','26.1',['26','010','10','1'].join('.'),'26.10.10.1:7443','https://26.10.10.1','localhost','26.10.10.1/path','26.10.10.1@evil.test',{},null])expect(()=>normalizeRadminIp(input)).toThrow();
 });
+it('accepts HTTPS domains without weakening private certificate configuration',()=>{
+ expect(normalizeServerAddress('group.example.com')).toBe('https://group.example.com');
+ expect(normalizeServerAddress('26.10.10.1')).toBe('26.10.10.1');
+ expect(parseServerConfig('{"apiUrl":"https://group.example.com","trust":"system"}')).toEqual({apiUrl:'https://group.example.com',trust:'system'});
+ for(const value of ['http://group.example.com','https://user:pass@group.example.com','group.example.com/path','group.example.com:7443','localhost','127.0.0.1','group.example.com?x=1'])expect(()=>normalizeServerAddress(value)).toThrow();
+ expect(()=>parseServerConfig('{"apiUrl":"https://group.example.com","trust":"system","certificate":"bad"}')).toThrow();
+});
 it('collects a certificate without sending application data, then validates it for persistence',async()=>{
  let bytes=0;
  const server=createServer({cert:certificate,key},socket=>socket.on('data',data=>{bytes+=data.length;}));
@@ -25,7 +32,8 @@ it('collects a certificate without sending application data, then validates it f
  try{
   const port=(server.address() as {port:number}).port;
   const pem=await readServerCertificate('127.0.0.1',port);
-  expect(parseServerConfig(JSON.stringify({apiUrl:'https://26.10.10.1:7443',certificate:pem})).certificate.trim()).toBe(certificate.trim());
+  await expect(readServerCertificate('localhost',port,2000,true)).rejects.toThrow();
+  expect(parseServerConfig(JSON.stringify({apiUrl:'https://26.10.10.1:7443',certificate:pem})).certificate?.trim()).toBe(certificate.trim());
   expect(()=>parseServerConfig(JSON.stringify({apiUrl:'https://26.10.10.2:7443',certificate:pem}))).toThrow();
   expect(bytes).toBe(0);
   await new Promise<void>((resolve,reject)=>{
@@ -33,5 +41,3 @@ it('collects a certificate without sending application data, then validates it f
   });
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
-
-

@@ -13,6 +13,10 @@ Comunicação para grupos: chat, chamadas, câmera e compartilhamento de tela. C
 
 O computador que hospeda o servidor precisa estar ligado, com Docker e Radmin funcionando. Informe o IP do host, não o IP do seu próprio PC. A primeira conexão usa confiança explícita no certificado apresentado; confirme sua identificação com o administrador. Nas próximas conexões, mudanças inesperadas de certificado são bloqueadas. Arquivos JSON antigos continuam aceitos na opção secundária de importação.
 
+## Hospedar em VPS — Ubuntu e Caddy
+
+Use o [guia de VPS](docs/vps.md) para um Compose separado com PostgreSQL privado, LiveKit e integração ao Caddy existente. O assistente `tools/setup-vps.py` gera configurações privadas sem alterar o outro sistema. Esta conexão requer o cliente atualizado com suporte a domínio HTTPS; versões antigas que aceitam somente IP Radmin precisam ser atualizadas.
+
 ## Hospedar em casa — Windows e Radmin
 
 ### 1. Preparar o computador

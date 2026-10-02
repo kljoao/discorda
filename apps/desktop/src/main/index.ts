@@ -6,7 +6,7 @@ import path from 'node:path';
 import { readFile,writeFile,mkdir } from 'node:fs/promises';
 import {Updates} from './updates';
 import {parseServerConfig} from './server-config';
-import {discoverServer,normalizeRadminIp} from './server-discovery';
+import {discoverServer,normalizeServerAddress} from './server-discovery';
 import {X509Certificate} from 'node:crypto';
 import { pathToFileURL } from 'node:url';
 import { APP_URL, DEV_URL, isTrustedDocument, resolveAssetPath, validateIpcCall } from './security';
@@ -104,15 +104,15 @@ else {
       if(connectingServer)return {ok:false,message:'Aguarde a conexão em andamento.'};
       if(media.callActive)return {ok:false,message:'Saia da chamada antes de trocar de servidor.'};
       let ip:string;
-      try{ip=normalizeRadminIp(args[0]);}catch(error){return {ok:false,message:(error as Error).message};}
+      try{ip=normalizeServerAddress(args[0]);}catch(error){return {ok:false,message:(error as Error).message};}
       connectingServer=true;
       try {
         let config;
         try{config=await discoverServer(ip);}catch(error){return {ok:false,message:(error as Error).message};}
-        const fingerprint=new X509Certificate(config.certificate).fingerprint256;
+        const fingerprint=config.trust==='system'?undefined:new X509Certificate(config.certificate).fingerprint256;
         const confirmation=await dialog.showMessageBox(window!,{type:'question',title:'Conectar ao grupo',
           message:`Confiar no servidor ${ip}?`,
-          detail:'Use o IP informado pelo administrador do grupo. Na primeira conexão, confira com ele a identificação abaixo. O aplicativo salvará este certificado e bloqueará mudanças inesperadas.\n\nIdentificação SHA-256:\n'+fingerprint+'\n\nO Discorda será reiniciado para conectar.',
+          detail:config.trust==='system'?'Confira se este é o domínio informado pelo administrador do grupo. O certificado HTTPS foi validado e poderá ser renovado automaticamente. O Discorda será reiniciado.':'Use o IP informado pelo administrador do grupo. Na primeira conexão, confira com ele a identificação abaixo. O aplicativo salvará este certificado e bloqueará mudanças inesperadas.\n\nIdentificação SHA-256:\n'+fingerprint+'\n\nO Discorda será reiniciado para conectar.',
           buttons:['Cancelar','Confiar e conectar'],defaultId:0,cancelId:0});
         if(confirmation.response!==1)return {ok:false,message:'Conexão cancelada.'};
         await live.stop();await media.stop();await auth.signOut();

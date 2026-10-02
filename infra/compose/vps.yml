@@ -1,0 +1,82 @@
+name: discorda-vps
+x-api: &api
+  image: discorda-vps-api:local
+  build:
+    context: ../..
+    dockerfile: services/backend/Discorda.Api/Dockerfile
+  environment:
+    DISCORDA_CONFIG_FILE: /run/discorda/settings.json
+    ASPNETCORE_ENVIRONMENT: Production
+  volumes:
+    - ../../.discorda/vps/settings.json:/run/discorda/settings.json:ro
+    - state:/app/state
+  security_opt: [no-new-privileges:true]
+  cap_drop: [ALL]
+  mem_limit: 768m
+  cpus: 0.75
+  logging: &logging
+    driver: json-file
+    options: {max-size: 10m, max-file: '3'}
+services:
+  postgres:
+    image: postgres:17.9-alpine
+    restart: unless-stopped
+    environment:
+      POSTGRES_DB: discorda
+      POSTGRES_USER: discorda
+      POSTGRES_PASSWORD_FILE: /run/secrets/postgres_password
+    secrets: [postgres_password]
+    volumes: [database:/var/lib/postgresql/data]
+    networks: [database]
+    mem_limit: 512m
+    cpus: 0.5
+    logging: *logging
+    healthcheck:
+      test: [CMD-SHELL, 'pg_isready -U discorda -d discorda']
+      interval: 5s
+      timeout: 3s
+      retries: 20
+  migrate:
+    <<: *api
+    command: [migrate]
+    networks: [database]
+    depends_on:
+      postgres: {condition: service_healthy}
+    restart: 'no'
+  livekit:
+    image: livekit/livekit-server:v1.13.7
+    command: [--config, /etc/livekit.yaml]
+    restart: unless-stopped
+    volumes: [../../.discorda/vps/livekit.yaml:/etc/livekit.yaml:ro]
+    networks: [media]
+    ports:
+      - '7881:7881/tcp'
+      - '7882:7882/udp'
+      - '3478:3478/udp'
+    mem_limit: 1536m
+    cpus: 1.0
+    logging: *logging
+  api:
+    <<: *api
+    restart: unless-stopped
+    networks:
+      database:
+      media:
+      proxy:
+        aliases: [discorda-api]
+    depends_on:
+      migrate: {condition: service_completed_successfully}
+      livekit: {condition: service_started}
+networks:
+  database:
+    internal: true
+  media:
+  proxy:
+    external: true
+    name: '${DISCORDA_PROXY_NETWORK:?Run tools/setup-vps.py}'
+volumes:
+  database:
+  state:
+secrets:
+  postgres_password:
+    file: ../../.discorda/vps/postgres-password

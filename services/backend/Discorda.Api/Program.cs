@@ -11,11 +11,23 @@ using Microsoft.AspNetCore.Diagnostics.HealthChecks;
 using Serilog;
 using Serilog.Events;
 using Serilog.Formatting.Compact;
+using Microsoft.AspNetCore.HttpOverrides;
+using System.Net;
 
 var builder = WebApplication.CreateBuilder(args);
 var selfHostConfig = Environment.GetEnvironmentVariable("DISCORDA_CONFIG_FILE");
 if (!string.IsNullOrWhiteSpace(selfHostConfig)) builder.Configuration.AddJsonFile(selfHostConfig, optional: false, reloadOnChange: false);
 builder.WebHost.ConfigureKestrel(options => options.Limits.MaxRequestBodySize = 65536);
+builder.Services.AddOptions<ForwardedHeadersOptions>().Configure<IConfiguration>((options, configuration) => {
+    var trustedProxy = configuration["Proxy:TrustedIp"];
+    if (!string.IsNullOrEmpty(trustedProxy)) {
+        var proxyIp = IPAddress.Parse(trustedProxy);
+        options.ForwardedHeaders = ForwardedHeaders.XForwardedFor | ForwardedHeaders.XForwardedProto;
+        options.ForwardLimit = 1;
+        options.KnownProxies.Clear(); options.KnownIPNetworks.Clear();
+        options.KnownProxies.Add(proxyIp);
+    }
+});
 builder.Services.AddSingleton<NetworkPolicy>();
 builder.Services.AddHttpClient("supabase-management", client => client.Timeout = TimeSpan.FromSeconds(15))
     .ConfigurePrimaryHttpMessageHandler(() => new HttpClientHandler { AllowAutoRedirect = false });
@@ -84,6 +96,7 @@ if (args.FirstOrDefault() == "whitelist")
     return;
 }
 app.UseExceptionHandler();
+app.UseForwardedHeaders();
 app.Use(async (context, next) =>
 {
     context.Response.Headers["X-Content-Type-Options"] = "nosniff";

@@ -38,10 +38,10 @@ test('built desktop loads with a sandboxed preload and functional health action'
     await page.screenshot({ path: 'test-results/desktop.png', fullPage: true });
     await app.evaluate(({ipcMain})=>{ipcMain.removeHandler('app:info');ipcMain.handle('app:info',()=>({version:'test',platform:'win32',serverConfigured:false}));});
     await page.reload();
-    await page.getByLabel('IP Radmin do servidor').fill('127.0.0.1');
+    await page.getByLabel('Endereço do servidor').fill('127.0.0.1');
     await page.getByRole('button',{name:'Conectar ao grupo',exact:true}).click();
-    await expect(page.getByText('Informe apenas o IPv4 Radmin do servidor (26.x.x.x), sem porta ou endereço web.')).toBeVisible();
-    await page.getByLabel('IP Radmin do servidor').fill('26.10.10.1');
+    await expect(page.getByText('Informe um domínio como grupo.exemplo.com ou um IP Radmin 26.x.x.x, sem caminho ou porta.')).toBeVisible();
+    await page.getByLabel('Endereço do servidor').fill('26.10.10.1');
     await page.screenshot({path:'test-results/connect-by-ip.png',fullPage:true});
     await page.getByRole('button',{name:'Configurações do aplicativo'}).click();
     await expect(page.getByRole('dialog')).toBeVisible();
