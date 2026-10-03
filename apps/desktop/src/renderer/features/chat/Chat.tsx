@@ -1,3 +1,4 @@
+import {formatMentions,applyMentionEdit,mentionOffset,findMention} from './mention-text';
 import {ServerHeader} from './ServerHeader';
 import {Servers} from '../Servers';
 import {scopedKey} from '../../lib/server-scope';
@@ -36,7 +37,6 @@ export function Chat({ account }: { account: ReactNode }) {
   const [showMedia,setShowMedia]=useState(false);
   const [mediaHost,setMediaHost]=useState<HTMLDivElement|null>(null);
   const [dockHost,setDockHost]=useState<HTMLDivElement|null>(null);
-  const [voiceChannel,setVoiceChannel]=useState<string>();
   const [workspace, setWorkspace] = useState<ChatWorkspace>();
   const attention=useChatAttention(workspace);
   const [adminOpen,setAdminOpen]=useState(false);
@@ -94,23 +94,22 @@ export function Chat({ account }: { account: ReactNode }) {
     catch (e) { setError(errorMessage(e)); } finally { setCreating(false); }
   }
   const channel = workspace?.channels.find(c => c.id === selected);
-  return <div className={'chat-shell'+(!membersOpen?' members-collapsed':'')}>
-    <Servers rail currentName={workspace?.name}/><aside className="chat-sidebar"><ServerHeader workspace={workspace} onRename={()=>load(false)} onManage={()=>setAdminOpen(true)}/>
+  return <div className={'chat-shell'+(!membersOpen||showMedia?' members-collapsed':'')}>
+    <Servers rail currentName={workspace?.name}/><aside className="chat-sidebar"><ServerHeader workspace={workspace} onRename={()=>load(false)} onManage={()=>setAdminOpen(true)} notifications={<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas menções e respostas</label>}</details>}/>
       <div className="sidebar-scroll">
-      {adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas menções e respostas</label>}</details><div className="chat-channel-label">Canais de texto{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
+      {adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}<div className="chat-channel-label">Canais de texto{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
       {newChannel && <form className="channel-form" onSubmit={createChannel}><input autoFocus aria-label="Nome do canal" value={name} maxLength={80} onChange={e => setName(e.target.value)} /><button disabled={creating || !name.trim()}>Criar</button></form>}
-      <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={selected === item.id ? 'selected' : ''} aria-current={selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>)}</nav>
-      <Voice presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} onChannel={setVoiceChannel} self={presence.find(p=>p.id===workspace?.userId)}/>
+      <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={!showMedia && selected === item.id ? 'selected' : ''} aria-current={!showMedia && selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>)}</nav>
+      <Voice presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} account={account} self={presence.find(p=>p.id===workspace?.userId)}/>
 
       </div><div ref={setDockHost} className="sidebar-footer"/>
     </aside>
-    <main className="chat-main"><div className="chat-account">{account}</div><div className="workspace-toolbar"><div className={`live-status ${connection}`} role="status">{connection === 'connected' ? 'Conectado em tempo real' : connection === 'reconnecting' ? 'Reconectando… seu rascunho continua aqui.' : 'Tempo real indisponível. Tentando reconectar…'}{connection!=='connected'&&<button onClick={()=>void window.discorda?.reconnectLive()}>Reconectar chat</button>}</div><button className="members-toggle" aria-label="Mostrar membros" aria-expanded={membersOpen} aria-controls="members-list" title="Mostrar ou ocultar membros" onClick={()=>setMembersOpen(!membersOpen)}><Users size={17}/><span>Membros</span></button></div>
+    <main className="chat-main">{connection!=='connected'&&<div className="workspace-toolbar"><div className={`live-status ${connection}`} role="status">{connection === 'reconnecting' ? 'Reconectando… seu rascunho continua aqui.' : 'Tempo real indisponível. Tentando reconectar…'}<button onClick={()=>void window.discorda?.reconnectLive()}>Reconectar chat</button></div></div>}
       {error && <div className="chat-error" role="alert">{error} <button onClick={() => void load()}>Tentar novamente</button></div>}
-      {voiceChannel&&<nav className="content-tabs" aria-label="Visualização"><button aria-pressed={!showMedia} onClick={()=>setShowMedia(false)}>Chat</button><button aria-pressed={showMedia} onClick={()=>setShowMedia(true)}>Chamada · {voiceChannel}</button></nav>}
       <div ref={setMediaHost} className="call-stage" hidden={!showMedia}/>
-      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
+      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation membersOpen={membersOpen} toggleMembers={()=>setMembersOpen(!membersOpen)} readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
     </main>
-    <aside id="members-list" className="members-rail" hidden={!membersOpen} aria-label="Membros disponíveis"><div className="members-heading"><h2>Pessoas do grupo</h2><span>{presence.length}</span></div><label className="member-search"><Search size={15}/><input type="search" aria-label="Buscar membros" placeholder="Buscar pessoa" maxLength={80} value={memberQuery} onChange={e=>setMemberQuery(e.target.value)}/></label>
+    <aside id="members-list" className="members-rail" hidden={!membersOpen||showMedia} aria-label="Membros disponíveis"><div className="members-heading"><h2>Pessoas do grupo</h2><span>{presence.length}</span></div><label className="member-search"><Search size={15}/><input type="search" aria-label="Buscar membros" placeholder="Buscar pessoa" maxLength={80} value={memberQuery} onChange={e=>setMemberQuery(e.target.value)}/></label>
       {(['online','away','offline'] as const).map(status=>{
         const members=memberGroups[status];
         const label=status==='online'?'Disponíveis':status==='away'?'Ausentes':'Offline';
@@ -127,7 +126,7 @@ export function Chat({ account }: { account: ReactNode }) {
   </div>;
 }
 
-function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
+function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {membersOpen:boolean;toggleMembers:()=>void;readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   const historicalRef=useRef(false);
   const [historical,setHistorical]=useState(false);
@@ -135,10 +134,22 @@ function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, u
   useEffect(()=>{if(readReady&&boundary===undefined)setBoundary(readMarker??'0');},[readReady,readMarker,boundary]);
   const firstUnread=useMemo(()=>boundary===undefined?-1:messages.findIndex(message=>message.authorId!==userId&&BigInt(message.id)>BigInt(boundary)),[messages,boundary,userId]);
   const composer=useRef<HTMLTextAreaElement>(null);
+  const beforeEdit=useRef<{start:number;end:number;inputType:string}|undefined>(undefined);
+  useEffect(()=>{
+    const node=composer.current;if(!node)return;
+    const capture=(event:Event)=>{beforeEdit.current={start:node.selectionStart,end:node.selectionEnd,inputType:(event as InputEvent).inputType??''};};
+    node.addEventListener('beforeinput',capture);return()=>node.removeEventListener('beforeinput',capture);
+  },[]);
   const [emojis,setEmojis]=useState(false);
   const [annotations,setAnnotations]=useState<Annotations>({reactions:[],pins:[]});
   const [reactionFor,setReactionFor]=useState<string>();
-  const [mentionOpen,setMentionOpen]=useState(false);
+  const [mention,setMention]=useState<ReturnType<typeof findMention>>();
+  const [mentionChoice,setMentionChoice]=useState(0);
+  const mentionOpen=!!mention;
+  const setMentionOpen=(value:boolean)=>{if(!value)setMention(undefined);};
+  const suggestions=useMemo(()=>{const query=mention?.query.toLocaleLowerCase('pt-BR')??'';return presence.filter(p=>p.id!==userId&&p.name.toLocaleLowerCase('pt-BR').includes(query)).slice(0,8);},[presence,userId,mention?.query]);
+  useEffect(()=>setMentionChoice(0),[mention?.query]);
+  useEffect(()=>{document.getElementById('mention-option-'+mentionChoice)?.scrollIntoView({block:'nearest'});},[mentionChoice]);
   const draftKey=scopedKey('draft:'+workspaceId+':'+userId+':'+channel.id);
   const presenceIndex=useMemo(()=>new Map(presence.map(p=>[p.id,p])),[presence]);
   const messageIndex=useMemo(()=>new Map(messages.map(m=>[m.id,m])),[messages]);
@@ -160,6 +171,17 @@ function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, u
   async function annotate(action:Extract<ChatAction,{kind:'reaction'|'pin'}>){try{await request(action);if(alive.current)refreshAnnotations.current([action.id]);}catch(e){if(alive.current)setError(errorMessage(e));}}
 
   const [draft, setDraft] = useState(()=>{try{return drafts.get(channel.id)??localStorage.getItem(draftKey)??'';}catch{return drafts.get(channel.id)??'';}});
+  const mentionDisplay=useMemo(()=>formatMentions(draft,presenceIndex),[draft,presenceIndex]);
+  function checkMention(text:string,caret:number){setMention(findMention(text,caret));setEmojis(false);}
+  function insertMention(person:PresenceMember){
+    if(!mention||busy||pending)return;
+    const start=mentionOffset(mentionDisplay,mention.start),end=mentionOffset(mentionDisplay,mention.end,true);
+    const next=draft.slice(0,start)+'<@'+person.id+'> '+draft.slice(end);
+    if(next.length>4000)return;
+    changeDraft(next);setMention(undefined);
+    const caret=mention.start+person.name.length+2;
+    requestAnimationFrame(()=>{composer.current?.focus();composer.current?.setSelectionRange(caret,caret);});
+  }
   const [error, setError] = useState('');
   const [loading, setLoading] = useState(true);
   const [hasMore, setHasMore] = useState(false);
@@ -244,7 +266,7 @@ function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, u
   useEffect(()=>{const mark=()=>{const last=currentMessages.current.at(-1);if(!historicalRef.current&&readReady&&last&&visibleRef.current&&nearBottom.current&&document.visibilityState==='visible'&&document.hasFocus())readCallback.current(last.id);};mark();window.addEventListener('focus',mark);document.addEventListener('visibilitychange',mark);return()=>{window.removeEventListener('focus',mark);document.removeEventListener('visibilitychange',mark);};},[messages,visible,atBottom,readReady]);
   function changeDraft(value: string) { setDraft(value); drafts.set(channel.id, value); try{if(value)localStorage.setItem(draftKey,value);else localStorage.removeItem(draftKey);}catch{} void window.discorda?.liveActivity(channel.id, value.trim().length > 0); }
   async function submit(event: React.FormEvent) {
-    event.preventDefault(); if (busy || !draft.trim()) return; setBusy(true); setError('');
+    event.preventDefault(); if (busy || !draft.trim()) return; setMention(undefined);setEmojis(false);setBusy(true); setError('');
     const action: ChatAction = edit ? { kind: 'edit', channelId: channel.id, id: edit.id, version: edit.version, body: draft }
       : pending ?? { kind: 'send', channelId: channel.id, clientId: crypto.randomUUID(), body: draft, replyToId: reply?.id };
     if (action.kind === 'send') { setPending(action); pendingSends.set(channel.id, action); }
@@ -263,7 +285,7 @@ function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, u
     finally { if (alive.current) setBusy(false); }
   }
   return <section className="conversation" aria-label={`Canal ${channel.name}`}>
-    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" aria-pressed={muted} onClick={toggleMuted}>{muted?'Ativar avisos deste canal':'Silenciar este canal'}</button><HistoryTools channelId={channel.id} onSelect={message=>{historicalRef.current=true;setHistorical(true);setMessages([message]);setHasMore(true);nearBottom.current=false;requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}}/></div>
+    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" title={muted?'Ativar avisos deste canal':'Silenciar este canal'} aria-label={muted?'Ativar avisos deste canal':'Silenciar este canal'} aria-pressed={muted} onClick={toggleMuted}><Bell size={18}/></button><HistoryTools channelId={channel.id} onSelect={message=>{historicalRef.current=true;setHistorical(true);setMessages([message]);setHasMore(true);nearBottom.current=false;requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}}/><button className="members-toggle" aria-label="Mostrar membros" aria-expanded={membersOpen} aria-controls="members-list" title="Mostrar ou ocultar membros" onClick={toggleMembers}><Users size={19}/></button></div>
     {firstUnread>=0&&<div className="unread-banner"><span>Novas mensagens desde sua última leitura</span><button onClick={()=>document.getElementById('message-'+messages[firstUnread].id)?.scrollIntoView({block:'start'})}>Ir para a primeira</button><button onClick={()=>setBoundary(messages.at(-1)?.id??'0')}>Dispensar</button></div>}
     <div className="message-list" ref={list} onScroll={() => { const node = list.current!; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;setAtBottom(nearBottom.current); }}>
       {historical&&<div className="unread-banner" role="status">Você está consultando o histórico.</div>}
@@ -285,9 +307,13 @@ function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, u
     <div className="recent-messages">{(!atBottom||historical)&&<button onClick={()=>{if(historicalRef.current)latest();nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
     <form className="message-composer" onSubmit={submit} onKeyDown={event=>{if(event.key==='Escape'){setEmojis(false);setMentionOpen(false);composer.current?.focus();}}}>
       {(reply || edit) && <div className="composer-context">{edit ? 'Editando mensagem' : `Respondendo a ${reply?.authorName}`}<button type="button" disabled={busy || !!pending} aria-label="Cancelar resposta ou edição" onClick={() => { setReply(undefined); setEdit(undefined); changeDraft(''); }}><X size={14} /></button></div>}
-      <div className="composer-row"><textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={draft} readOnly={busy || !!pending} onChange={event => changeDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button type="button" title="Mencionar pessoa" aria-label="Mencionar pessoa" aria-expanded={mentionOpen} onClick={()=>{setMentionOpen(!mentionOpen);setEmojis(false);}}>@</button><button type="button" title="Escolher emoji" aria-label="Escolher emoji" aria-expanded={emojis} disabled={busy || !!pending} onClick={()=>{setEmojis(!emojis);setMentionOpen(false);}}><Smile size={20}/></button><button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>
-      {mentionOpen&&<div className="mention-picker" role="group" aria-label="Mencionar membro">{!presence.some(p=>p.id!==userId)&&<p>Nenhuma outra pessoa disponível.</p>}{presence.filter(p=>p.id!==userId).map(p=><button type="button" key={p.id} disabled={busy||!!pending} onClick={()=>{const token='<@'+p.id+'> ';if(draft.length+token.length<=4000)changeDraft(draft+token);setMentionOpen(false);composer.current?.focus();}}>@{p.name}</button>)}</div>}
-      {emojis&&<div className="emoji-picker" role="group" aria-label="Emojis" onKeyDown={e=>{if(e.key==='Escape'){setEmojis(false);composer.current?.focus();}}}>{['😀','😂','🥰','😎','🤔','😢','😮','👍','👎','👏','🙌','❤️','🔥','🎉','🎮','👀','✅','🚀'].map(emoji=><button key={emoji} type="button" aria-label={'Inserir '+emoji} onClick={()=>{const node=composer.current;const start=node?.selectionStart??draft.length,end=node?.selectionEnd??start;if(draft.length-(end-start)+emoji.length>4000)return;changeDraft(draft.slice(0,start)+emoji+draft.slice(end));setEmojis(false);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(start+emoji.length,start+emoji.length);});}}>{emoji}</button>)}</div>}
+      <div className="composer-row"><textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={mentionDisplay.text} aria-autocomplete="list" aria-controls={mentionOpen?'mention-suggestions':undefined} aria-activedescendant={mentionOpen&&suggestions.length?'mention-option-'+Math.min(mentionChoice,suggestions.length-1):undefined} readOnly={busy || !!pending} onChange={event => {const next=applyMentionEdit(draft,mentionDisplay,event.target.value,beforeEdit.current);beforeEdit.current=undefined;if(next.length<=4000){changeDraft(next);checkMention(event.target.value,event.target.selectionStart);}}} onClick={event=>checkMention(mentionDisplay.text,event.currentTarget.selectionStart)} onKeyUp={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))checkMention(mentionDisplay.text,event.currentTarget.selectionStart);}} onKeyDown={event => {
+        if(event.nativeEvent.isComposing)return;
+        if(mentionOpen&&event.key==='Escape'){event.preventDefault();event.stopPropagation();setMention(undefined);return;}
+        if(mentionOpen&&suggestions.length&&['ArrowDown','ArrowUp','Enter','Tab'].includes(event.key)&&!event.shiftKey){event.preventDefault();if(event.key==='ArrowDown'||event.key==='ArrowUp')setMentionChoice(current=>(current+(event.key==='ArrowDown'?1:-1)+suggestions.length)%suggestions.length);else insertMention(suggestions[Math.min(mentionChoice,suggestions.length-1)]);return;}
+        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button type="button" title="Mencionar pessoa" aria-label="Mencionar pessoa" aria-expanded={mentionOpen} disabled={busy||!!pending} onClick={()=>{const node=composer.current;const caret=node?.selectionStart??mentionDisplay.text.length;const next=mentionDisplay.text.slice(0,caret)+'@'+mentionDisplay.text.slice(caret);const body=applyMentionEdit(draft,mentionDisplay,next);if(body.length>4000)return;changeDraft(body);checkMention(next,caret+1);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(caret+1,caret+1);});}}>@</button><button type="button" title="Escolher emoji" aria-label="Escolher emoji" aria-expanded={emojis} disabled={busy || !!pending} onClick={()=>{setEmojis(!emojis);setMentionOpen(false);}}><Smile size={20}/></button><button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>
+      {mentionOpen&&<div className="mention-picker" id="mention-suggestions" role="listbox" aria-label="Mencionar membro"><small>Marcar pessoa · ↑↓ escolher · Enter confirmar</small>{!suggestions.length&&<p>Nenhuma pessoa encontrada.</p>}{suggestions.map((person,index)=><button id={'mention-option-'+index} role="option" aria-selected={index===Math.min(mentionChoice,suggestions.length-1)} type="button" key={person.id} disabled={busy||!!pending} onMouseDown={e=>e.preventDefault()} onClick={()=>insertMention(person)}><Avatar url={person.avatarUrl} name={person.name}/><span>{person.name}</span><small>{person.status==='offline'?'Offline':'Disponível'}</small></button>)}</div>}
+      {emojis&&<div className="emoji-picker" role="group" aria-label="Emojis" onKeyDown={e=>{if(e.key==='Escape'){setEmojis(false);composer.current?.focus();}}}>{['😀','😂','🥰','😎','🤔','😢','😮','👍','👎','👏','🙌','❤️','🔥','🎉','🎮','👀','✅','🚀'].map(emoji=><button key={emoji} type="button" aria-label={'Inserir '+emoji} onClick={()=>{const node=composer.current;const displayStart=node?.selectionStart??mentionDisplay.text.length,displayEnd=node?.selectionEnd??displayStart;const start=mentionOffset(mentionDisplay,displayStart),end=mentionOffset(mentionDisplay,displayEnd,true);if(draft.length-(end-start)+emoji.length>4000)return;changeDraft(draft.slice(0,start)+emoji+draft.slice(end));setEmojis(false);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(displayStart+emoji.length,displayStart+emoji.length);});}}>{emoji}</button>)}</div>}
       <div className="composer-hint"><span>{pending ? 'Envio pendente: tente novamente para confirmar sem duplicar.' : 'Enter envia · Shift + Enter quebra a linha'}</span><span>{draft.length}/4000</span></div>
     </form>
   </section>;

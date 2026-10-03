@@ -9,13 +9,13 @@ export async function shareApplicationAudio(room:Room,id:string,onEnded:()=>void
     node=new AudioWorkletNode(context,'discorda-application-audio',{numberOfInputs:0,numberOfOutputs:1,outputChannelCount:[2]});
     const destination=context.createMediaStreamDestination();node.connect(destination);
     off=window.discorda!.onApplicationAudio(data=>{if(!stopped){const copy=new Uint8Array(data);node!.port.postMessage(copy.buffer,[copy.buffer]);}});
-    offEnd=window.discorda!.onApplicationAudioEnd(()=>{void stop();onEnded();});
+    offEnd=window.discorda!.onApplicationAudioEnd(()=>{void stop().then(onEnded,onEnded);});
     await context.resume();await window.discorda!.applicationAudio({kind:'start',id});
     if(stopped)throw new Error('Audio capture ended');
     track=new LocalAudioTrack(destination.stream.getAudioTracks()[0],undefined,true);
     await room.localParticipant.publishTrack(track,{source:Track.Source.ScreenShareAudio,forceStereo:true,dtx:false,red:true,audioPreset:{maxBitrate:192000}});
     if(stopped){await room.localParticipant.unpublishTrack(track).catch(()=>{});track.stop();throw new Error('Audio capture ended');}
-    timer=setInterval(()=>void window.discorda!.applicationAudio({kind:'pulse'}).catch(()=>{void stop();onEnded();}),2000);
+    timer=setInterval(()=>void window.discorda!.applicationAudio({kind:'pulse'}).catch(()=>{void stop().then(onEnded,onEnded);}),2000);
     return stop;
   } catch(error){await stop();throw error;}
 }

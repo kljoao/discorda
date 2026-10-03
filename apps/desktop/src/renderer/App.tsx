@@ -28,7 +28,12 @@ export function App(){
     try{const result=await window.discorda.connectServer(serverIp);setConnectionMessage(result.ok?'Conexão salva. Reiniciando…':result.message??'Não foi possível conectar.');}
     catch{setConnectionMessage('Não foi possível conectar. Confira o IP e tente novamente.');}finally{setConnecting(false);}
   }
-  if(auth.status==='signed-in'&&info)return <Chat account={<AuthPanel onStateChange={updateAuth}/>}/>;
+  useEffect(()=>{
+    if(auth.status!=='signed-in')return;
+    let active=true;const timer=setInterval(()=>{void window.discorda?.getAuthState().then(value=>{if(active)updateAuth(value);}).catch(()=>{});},30000);
+    return()=>{active=false;clearInterval(timer);};
+  },[auth.status]);
+  if(auth.status==='signed-in'&&info)return <Chat account={<AuthPanel accountView onStateChange={updateAuth}/>}/>;
   const configured=info?.serverConfigured!==false;
   const healthy=status?.api==='online'&&status.database==='ready';
   return <div className="entry-shell">
