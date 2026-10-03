@@ -76,7 +76,7 @@ export const IPC = {
 export interface ChatMessage { replyAuthorId?:string|null; id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
 export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Admin' | 'Moderator' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string }[]; }
 export type ManagementAction = {kind:'manageMembers'} | {kind:'audit';before?:string} | {kind:'role';userId:string;role:'Admin'|'Moderator'|'Member'} | {kind:'moderateVoice';userId:string;channelId?:string};
-export type ChatAction = ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
+export type ChatAction = {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
   | {kind:'search';channelId:string;query:string;before?:string} | {kind:'pins';channelId:string;before?:string}
   | {kind:'annotations';channelId:string;ids:string[]} | {kind:'reaction';channelId:string;id:string;emoji:string;enabled:boolean}
   | {kind:'pin';channelId:string;id:string;enabled:boolean} | { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }

@@ -69,6 +69,20 @@ public static class ChatEndpoints
             var effectiveRole = await Permissions.Role(ctx, app.Configuration, db, ct);
             return Results.Ok(new { workspace.Id, workspace.Name, isAdmin = Permissions.Rank(effectiveRole) >= 2, role = effectiveRole.ToString(), userId = user, channels = channels.Select(c => new {c.Id,c.Name,lastMessageId=heads.GetValueOrDefault(c.Id)}), voiceChannels });
         });
+        api.MapPut("/workspace", async (NewChannel input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
+        {
+            if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 2) return Results.Forbid();
+            var name = input.Name?.Trim().Normalize();
+            if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || name.Any(c => char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format)) return Results.BadRequest();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891321)", ct);
+            var workspace = await db.Workspaces.SingleAsync(w => w.Id == GroupId, ct);
+            workspace.Name = name;
+            Permissions.Audit(db, ctx, "workspace.rename", workspace.Id.ToString());
+            await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+            await live.Publish("channels", new {id=workspace.Id});
+            return Results.NoContent();
+        }).RequireRateLimiting("admin-writes");
         api.MapPost("/channels", async (NewChannel input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 2) return Results.Forbid();

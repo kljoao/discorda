@@ -10,7 +10,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     const page = await browser.newPage({ viewport: { width: 1240, height: 820 } });
     await page.addInitScript(() => {
       // Test-only preload simulation. Production never loads this file or bypasses Auth.
-      let displayName='Pessoa de teste';
+      let displayName='Pessoa de teste';let workspaceName='Grupo de teste';
       const channels = [{id: '225a47d7-779e-4992-89d2-03b1517f9112', name: 'geral'}];
       const messages: import('../../src/shared/ipc/contracts').ChatMessage[] = [];
       window.addEventListener('test-seed',()=>{messages.length=0;for(let i=1;i<=1100;i++){const message={id:String(i),authorId:'other-user',authorName:'Histórico',channelId:channels[0].id,clientId:'seed-'+i,body:'Mensagem '+i,replyToId:null,createdAt:new Date().toISOString(),editedAt:null,deletedAt:null,version:1};messages.push(message);listeners.forEach(listener=>listener({kind:'message',data:message}));}});
@@ -42,7 +42,8 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
           if(action.kind==='search'||action.kind==='pins')return {ok:true,data:{items:messages.filter(m=>m.channelId===action.channelId&&!m.deletedAt&&(action.kind==='pins'?pins.has(m.id):m.body.includes(action.query))),hasMore:false}};
           if (action.kind === 'members' && memberFailure) {memberFailure=false;return {ok:false,message:'Temporariamente indisponível'};}
           if (action.kind === 'members') return {ok:true,data:[{id:'past-member',name:'Amigo offline',status:'offline',typingChannelId:null,avatarUrl:null}]};
-          if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: 'Grupo de teste', role: 'Owner',isAdmin:true, userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
+          if(action.kind==='renameWorkspace'){workspaceName=action.name;return {ok:true,data:null};}
+          if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: workspaceName, role: 'Owner',isAdmin:true, userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
           if (action.kind === 'voiceRoster') return {ok:true,data:[{channelId:'bde069ed-d1c4-4930-92d3-9360eab43cb8',userId:'friend',name:'Amigo na voz'}]};
           if (action.kind === 'profile') {displayName=action.displayName;return {ok:true,data:{id:'test-user',displayName,email:'test@example.test'}};}
           if (action.kind === 'history') { const items = messages.filter(m => m.channelId === action.channelId && (!action.before || BigInt(m.id) < BigInt(action.before))); return {ok: true, data: {items: items.slice(-50), hasMore: items.length > 50}}; }
@@ -66,6 +67,17 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.goto('http://127.0.0.1:5183');
     await expect(page.getByRole('heading', {name: 'geral', exact: true})).toBeVisible();
     await expect(page.getByRole('region',{name:'Canais de voz'}).getByText('Amigo na voz')).toBeVisible();
+    await expect(page.getByRole('navigation',{name:'Servidores',exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Grupo de teste · Servidor atual',exact:true})).toHaveAttribute('aria-current','page');
+    await page.getByRole('button',{name:'Adicionar servidor',exact:true}).click();
+    await expect(page.getByLabel('Endereço ou convite do servidor')).toBeFocused();
+    await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
+    await page.getByRole('button',{name:'Alterar nome do servidor',exact:true}).click();
+    await page.getByRole('dialog',{name:'Alterar nome do servidor'}).getByLabel('Nome',{exact:true}).fill('Nosso servidor');
+    await page.getByRole('button',{name:'Salvar nome',exact:true}).click();
+    await expect(page.getByRole('button',{name:'Nosso servidor · Servidor atual',exact:true})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Opções do servidor',exact:true})).toBeFocused();
     // Recover from failed initial fetch without a realtime presence event.
     await expect(page.getByText('Não foi possível atualizar a lista.')).toBeVisible();
     await page.getByRole('button',{name:'Tentar novamente',exact:true}).click();
@@ -79,6 +91,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('button',{name:'Mostrar membros',exact:true}).click();
     await expect(page.getByRole('complementary',{name:'Membros disponíveis'})).toBeVisible();
 
+    await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
     await page.getByRole('button',{name:'Administrar servidor',exact:true}).click();
     await page.getByRole('button',{name:'Acessos e rede do servidor'}).click();
     const administration=page.getByRole('dialog',{name:'Administrar servidor'});
@@ -205,6 +218,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('textbox',{name:'Mensagem',exact:true}).fill('Rascunho entre canais');
     await page.getByRole('navigation',{name:'Canais',exact:true}).getByRole('button',{name:/música/}).click();
     await general.click();await expect(page.getByRole('textbox',{name:'Mensagem',exact:true})).toHaveValue('Rascunho entre canais');
+    await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
     await page.getByRole('button',{name:'Administrar servidor',exact:true}).click();
     await page.screenshot({path:'test-results/management-community.png',fullPage:true,animations:'disabled'});
     await page.getByLabel('Mover ou remover Amigo offline').selectOption('remove');
@@ -222,6 +236,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByLabel('Convite copiado')).toHaveValue(/discorda:\/\/join/);
     await page.screenshot({path:'test-results/community-servers.png',fullPage:true});
     await page.keyboard.press('Escape');
+    await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
     await page.getByRole('button',{name:'Administrar servidor',exact:true}).click();
     await page.getByText('O que cada cargo pode fazer?',{exact:true}).click();
     await expect(page.getByRole('table')).toBeVisible();

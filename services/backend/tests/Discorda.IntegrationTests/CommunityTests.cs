@@ -24,6 +24,27 @@ public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixt
         var workspace=await client.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");return (client,workspace.GetProperty("userId").GetGuid());
     }
     [Fact]
+    public async Task ServerRenameRequiresAdminAndIsVisibleToMembers()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        var owner=await Member(app,email);var member=await Member(app);
+        using var o=owner.Client;using var m=member.Client;
+        const string route="/api/v1/chat/workspace";
+        Assert.Equal(HttpStatusCode.Forbidden,(await m.PutAsJsonAsync(route,new{name="Denied"})).StatusCode);
+        await using var db=fixture.Database();
+        await db.WorkspaceMembers.Where(w=>w.UserId==member.Id).ExecuteUpdateAsync(s=>s.SetProperty(w=>w.Role,Discorda.Core.Workspaces.MemberRole.Moderator));
+        Assert.Equal(HttpStatusCode.Forbidden,(await m.PutAsJsonAsync(route,new{name="Denied"})).StatusCode);
+        await db.WorkspaceMembers.Where(w=>w.UserId==member.Id).ExecuteUpdateAsync(s=>s.SetProperty(w=>w.Role,Discorda.Core.Workspaces.MemberRole.Admin));
+        (await m.PutAsJsonAsync(route,new{name="Nome do administrador"})).EnsureSuccessStatusCode();
+        Assert.Equal("Nome do administrador",(await o.GetFromJsonAsync<JsonElement>(route)).GetProperty("name").GetString());
+        foreach(var invalid in new[]{"",new string('x',81),"Hidden\u200bname"})
+            Assert.Equal(HttpStatusCode.BadRequest,(await o.PutAsJsonAsync(route,new{name=invalid})).StatusCode);
+        (await o.PutAsJsonAsync(route,new{name="  Nosso servidor  "})).EnsureSuccessStatusCode();
+        Assert.Equal("Nosso servidor",(await m.GetFromJsonAsync<JsonElement>(route)).GetProperty("name").GetString());
+    }
+
+    [Fact]
     public async Task SetupIsOwnerOnlyIdempotentAndOperationReportContainsNoSecrets()
     {
         var email=Guid.NewGuid()+"@example.test";

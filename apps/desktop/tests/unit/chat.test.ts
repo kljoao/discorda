@@ -5,6 +5,11 @@ import { mergeMessages } from '../../src/renderer/features/chat/Chat';
 import type { ChatMessage } from '../../src/shared/ipc/contracts';
 
 describe('chat boundary', () => {
+  it('validates shared server names at the IPC boundary', () => {
+    for(const name of ['', 'x'.repeat(81), 'Hidden\u200bname', 'Line\nbreak']) expect(()=>validateChatAction({kind:'renameWorkspace',name})).toThrow();
+    expect(()=>validateChatAction({kind:'renameWorkspace',name:'Nosso servidor'})).not.toThrow();
+  });
+
   it('rejects arbitrary routes, invalid IDs, oversized bodies and unsafe links', () => {
     for (const action of [{kind: 'fetch', url: 'https://attacker.test'}, {kind: 'history', channelId: '../auth/config'}, {kind: 'openLink', url: 'file:///C:/secret'}, {kind: 'openLink', url: 'https://user:pass@example.com'}, {kind: 'send', channelId: crypto.randomUUID(), clientId: crypto.randomUUID(), body: 'x'.repeat(4001)}]) expect(() => validateChatAction(action)).toThrow();
     expect(() => validateChatAction({kind: 'history', channelId: crypto.randomUUID(), before: '9007199254740993'})).not.toThrow();
