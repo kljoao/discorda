@@ -50,6 +50,11 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
         response.EnsureSuccessStatusCode();
         return await response.Content.ReadFromJsonAsync<JsonElement>(ct);
     }
+    public async Task<bool> Healthy(CancellationToken ct) {
+        if(!Enabled)return false;
+        try {await Rpc("ListRooms", new {}, new {roomList=true}, ct);return true;}
+        catch(Exception e) when(e is HttpRequestException or TaskCanceledException or JsonException) {return false;}
+    }
     public async Task<object> Join(MemberProfile profile, Guid session, Guid channel, CancellationToken ct)
     {
         var room = RoomName(channel);

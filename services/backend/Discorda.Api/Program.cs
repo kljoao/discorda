@@ -38,6 +38,7 @@ builder.Services.AddSerilog(configuration => configuration
     .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(new RenderedCompactJsonFormatter()));
+builder.Services.AddSingleton<OperationsCache>();
 builder.Services.AddSingleton<MediaService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MediaService>());
 builder.Services.AddHttpClient("livekit", client => client.Timeout = TimeSpan.FromSeconds(5));
@@ -58,7 +59,9 @@ builder.Services.AddRateLimiter(options =>
         context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
     options.GlobalLimiter = PartitionedRateLimiter.Create<HttpContext, string>(context =>
-        RateLimitPartition.GetFixedWindowLimiter(context.Connection.RemoteIpAddress?.ToString() ?? "unknown",
+        RateLimitPartition.GetFixedWindowLimiter(context.User.Identity?.IsAuthenticated == true
+            ? "user:" + context.User.FindFirst("sub")!.Value
+            : "ip:" + (context.Connection.RemoteIpAddress?.ToString() ?? "unknown"),
             _ => new FixedWindowRateLimiterOptions
             {
                 PermitLimit = 120, Window = TimeSpan.FromMinutes(1), QueueLimit = 0
@@ -122,6 +125,7 @@ app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check 
 if (app.Environment.IsDevelopment()) app.MapOpenApi().AllowAnonymous();
 app.MapDiscordaAuth();
 app.MapDiscordaAdmin();
+app.MapCommunityAdmin();
 app.MapChat();
 app.MapChatFeatures();
 app.MapManagement();

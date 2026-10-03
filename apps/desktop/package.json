@@ -1,6 +1,6 @@
 {
   "name": "@discorda/desktop",
-  "version": "0.10.1",
+  "version": "0.11.0",
   "private": true,
   "description": "Seu grupo, no mesmo lugar.",
   "author": "Discorda",
@@ -28,7 +28,8 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tailwind-merge": "3.7.0",
-    "undici": "8.11.2"
+    "undici": "8.11.2",
+    "ws": "8.22.0"
   },
   "devDependencies": {
     "@playwright/test": "1.63.0",
@@ -36,6 +37,7 @@
     "@types/node": "24.19.0",
     "@types/react": "19.3.0",
     "@types/react-dom": "19.3.0",
+    "@types/ws": "8.18.2",
     "@vitejs/plugin-react": "6.1.1",
     "electron": "44.4.5",
     "electron-builder": "26.15.3",

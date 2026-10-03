@@ -1,5 +1,7 @@
 # Discorda
 
+Veja o [guia de uso da comunidade](docs/community.md) para alternar servidores, compartilhar convites, abrir transmissões em outra janela, ajustar acessibilidade e administrar canais, permissões e operação.
+
 Comunicação para grupos: chat, chamadas, câmera e compartilhamento de tela. Código sob [MIT](LICENSE). Electron/React no desktop; ASP.NET Core, PostgreSQL e LiveKit no servidor. O Supabase é usado **somente para login com Google**; mensagens e permissões ficam no seu PostgreSQL.
 
 > **Sobre o projeto e as contribuições:** o Discorda nasceu como um experimento de desenvolvimento com o GPT-6 Astra. Melhorias no código, correções de vulnerabilidades e novas funcionalidades são sempre bem-vindas. Por segurança, todos os pull requests serão revisados por uma pessoa antes de serem incorporados ao projeto; essa responsabilidade não será delegada à IA. Para relatar vulnerabilidades, siga as orientações do [SECURITY.md](SECURITY.md).

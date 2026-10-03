@@ -1,10 +1,16 @@
-import {afterAll,beforeAll,expect,it} from 'vitest';
+import {createServer as httpsServer} from 'node:https';
+import {request,getGlobalDispatcher,setGlobalDispatcher} from 'undici';
+import {WebSocketServer} from 'ws';
+import {serverDispatcher,serverTls} from '../../src/main/server-transport';
+import {LiveChatClient} from '../../src/main/live-chat';
+import {afterAll,beforeAll,expect,it,vi} from 'vitest';
 import {mkdtempSync,readFileSync,rmSync,existsSync} from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
 import {execFileSync} from 'node:child_process';
 import {createServer,connect} from 'node:tls';
 import {normalizeRadminIp,normalizeServerAddress,readServerCertificate} from '../../src/main/server-discovery';
+import {ServerLibrary} from '../../src/main/server-library';
 import {parseServerConfig} from '../../src/main/server-config';
 let directory:string,certificate:string,key:string;
 beforeAll(()=>{
@@ -41,3 +47,37 @@ it('collects a certificate without sending application data, then validates it f
   });
  }finally{await new Promise<void>(resolve=>server.close(()=>resolve()));}
 });
+
+it('preserves expired saved certificates in the library but refuses connecting with them',async()=>{
+ const config=parseServerConfig(JSON.stringify({apiUrl:'https://26.10.10.1:7443',certificate}));
+ const library=new ServerLibrary(directory);await library.remember(config);
+ const clock=vi.spyOn(Date,'now').mockReturnValue(Date.now()+3*86400000);
+ try{expect(await library.entries()).toHaveLength(1);await library.remember({apiUrl:'https://group.example.test',trust:'system'});expect(await library.entries()).toHaveLength(2);expect(()=>parseServerConfig(JSON.stringify(config))).toThrow();}finally{clock.mockRestore();}
+});
+
+it('scopes a private certificate to one origin for HTTP and authenticated WebSockets',async()=>{
+ let foreignRequests=0;
+ const first=httpsServer({cert:certificate,key},(_,response)=>response.end('ok'));
+ const foreign=httpsServer({cert:certificate,key},(_,response)=>{foreignRequests++;response.end('unexpected');});
+ await new Promise<void>(resolve=>first.listen(0,'127.0.0.1',resolve));
+ await new Promise<void>(resolve=>foreign.listen(0,'127.0.0.1',resolve));
+ const origin='https://127.0.0.1:'+(first.address() as {port:number}).port;
+ const other='https://127.0.0.1:'+(foreign.address() as {port:number}).port;
+ const config={apiUrl:origin,certificate},dispatcher=serverDispatcher(config);
+ const ws=new WebSocketServer({server:first});let authorized=0;
+ ws.on('connection',(socket,req)=>{if(req.headers.authorization==='Bearer isolated-test')authorized++;socket.on('message',raw=>{
+  for(const frame of raw.toString().split('\x1e').filter(Boolean)){const message=JSON.parse(frame);if(message.protocol)socket.send('{}\x1e');if(message.type===1)socket.send(JSON.stringify({type:3,invocationId:message.invocationId})+'\x1e');}
+ });});
+ const client=new LiveChatClient(origin,async()=> 'isolated-test',()=>{},()=>false,config);
+ const previous=getGlobalDispatcher();setGlobalDispatcher(dispatcher);
+ try{
+  expect(await (await request(origin,{dispatcher})).body.text()).toBe('ok');
+  expect(await (await fetch(origin)).text()).toBe('ok');
+  await expect(fetch(other)).rejects.toThrow();
+  await expect(request(other,{dispatcher,headers:{Authorization:'Bearer must-not-leak'}})).rejects.toThrow();
+  expect(foreignRequests).toBe(0);expect(serverTls(other,config)).toBeUndefined();
+  client.start();await expect.poll(()=>client.snapshot.state).toBe('connected');expect(authorized).toBe(1);
+  await new Promise<void>((resolve,reject)=>{const socket=connect({host:'127.0.0.1',port:(first.address() as {port:number}).port,...serverTls(origin,config)},()=>{
+   expect(serverTls(origin,config)!.checkServerIdentity!('127.0.0.1',{...socket.getPeerCertificate(),fingerprint256:'wrong'})).toBeInstanceOf(Error);socket.destroy();resolve();});socket.on('error',reject);});
+ }finally{setGlobalDispatcher(previous);await client.stop();for(const peer of ws.clients)peer.terminate();await new Promise<void>(resolve=>ws.close(()=>resolve()));await dispatcher.close();first.closeAllConnections();foreign.closeAllConnections();await Promise.all([new Promise<void>(resolve=>first.close(()=>resolve())),new Promise<void>(resolve=>foreign.close(()=>resolve()))]);}
+},15000);

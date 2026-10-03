@@ -23,6 +23,84 @@ public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixt
         var client=app.CreateClient();client.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",fixture.Token(Guid.NewGuid(),Guid.NewGuid(),email));
         var workspace=await client.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");return (client,workspace.GetProperty("userId").GetGuid());
     }
+    [Fact]
+    public async Task SetupIsOwnerOnlyIdempotentAndOperationReportContainsNoSecrets()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        var owner=await Member(app,email);var member=await Member(app);
+        using var o=owner.Client;using var m=member.Client;
+        var name="channel-"+Guid.NewGuid().ToString("N");
+        var input=new {name="Comunidade de teste",textChannels=new[]{name},voiceChannels=new[]{name+"-voice"}};
+        Assert.Equal(HttpStatusCode.Forbidden,(await m.PutAsJsonAsync("/api/v1/admin/setup",input)).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,(await m.GetAsync("/api/v1/admin/operations")).StatusCode);
+        (await o.PutAsJsonAsync("/api/v1/admin/setup",input)).EnsureSuccessStatusCode();
+        (await o.PutAsJsonAsync("/api/v1/admin/setup",input)).EnsureSuccessStatusCode();
+        var workspace=await o.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");
+        Assert.Equal("Comunidade de teste",workspace.GetProperty("name").GetString());
+        Assert.Single(workspace.GetProperty("channels").EnumerateArray(),c=>c.GetProperty("name").GetString()==name);
+        Assert.Single(workspace.GetProperty("voiceChannels").EnumerateArray(),c=>c.GetProperty("name").GetString()==name+"-voice");
+        Assert.Equal(HttpStatusCode.BadRequest,(await o.PutAsJsonAsync("/api/v1/admin/setup",new{name="x",textChannels=new string[11],voiceChannels=Array.Empty<string>()})).StatusCode);
+        var report=await o.GetStringAsync("/api/v1/admin/operations");
+        foreach(var secret in new[]{email,"password","apiSecret","connectionString"})Assert.DoesNotContain(secret,report,StringComparison.OrdinalIgnoreCase);
+        var status=JsonDocument.Parse(report).RootElement;Assert.Equal("ready",status.GetProperty("database").GetString());Assert.True(status.GetProperty("storage").GetProperty("databaseBytes").GetInt64()>0);
+    }
+    [Fact]
+    public async Task ChannelCapacityIsSharedBySetupAndManualCreationAndRetriesAreSafe()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        var owner=await Member(app,email);using var client=owner.Client;
+        var name="capacity-"+Guid.NewGuid().ToString("N");
+        await using var db=fixture.Database();
+        var existing=await db.Channels.CountAsync(c=>c.WorkspaceId==ChatEndpoints.GroupId&&c.ArchivedAt==null);
+        var channels=Enumerable.Range(0,100-existing).Select(i=>new Discorda.Core.Channels.Channel{WorkspaceId=ChatEndpoints.GroupId,Name=name+i,Type=Discorda.Core.Channels.ChannelType.Text}).ToArray();
+        db.Channels.AddRange(channels);await db.SaveChangesAsync();
+        try{
+            var input=new{name="Capacity test",textChannels=new[]{channels[0].Name,channels[0].Name},voiceChannels=Array.Empty<string>()};
+            (await client.PutAsJsonAsync("/api/v1/admin/setup",input)).EnsureSuccessStatusCode();
+            Assert.Equal(HttpStatusCode.BadRequest,(await client.PostAsJsonAsync("/api/v1/chat/channels",new{name="overflow"})).StatusCode);
+            Assert.Equal(HttpStatusCode.BadRequest,(await client.PutAsJsonAsync("/api/v1/admin/setup",new{name="Overflow",textChannels=new[]{"overflow"},voiceChannels=Array.Empty<string>()})).StatusCode);
+            Assert.Equal("Capacity test",(await client.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace")).GetProperty("name").GetString());
+        }finally{var ids=channels.Select(c=>c.Id).ToArray();await db.Channels.Where(c=>ids.Contains(c.Id)).ExecuteDeleteAsync();}
+    }
+
+    [Fact]
+    public async Task ConcurrentMembersBehindOneIpDoNotShareTheirRequestBudget()
+    {
+        await using var app=fixture.App();
+        var members=new List<HttpClient>();
+        try{
+            for(var i=0;i<15;i++)members.Add((await Member(app)).Client);
+            var channelId=Guid.NewGuid();
+            await using var db=fixture.Database();
+            var author=await db.Users.Select(u=>u.Id).FirstAsync();
+            db.Channels.Add(new Discorda.Core.Channels.Channel{Id=channelId,WorkspaceId=ChatEndpoints.GroupId,Name="Load test",Type=Discorda.Core.Channels.ChannelType.Text});
+            await db.SaveChangesAsync();
+            await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO discorda.messages (\"ChannelId\",\"AuthorId\",\"ClientId\",\"Body\",\"CreatedAt\",\"Version\") SELECT {channelId},{author},gen_random_uuid(),'Synthetic history ' || i,now(),1 FROM generate_series(1,10000) i");
+            var samples=new System.Collections.Concurrent.ConcurrentBag<double>();
+            var elapsed=System.Diagnostics.Stopwatch.StartNew();
+            var responses=await Task.WhenAll(members.Select(async client=>{
+                var statuses=new List<HttpStatusCode>();
+                for(var i=0;i<10;i++){var timer=System.Diagnostics.Stopwatch.StartNew();using var response=await client.GetAsync($"/api/v1/chat/channels/{channelId}/messages");samples.Add(timer.Elapsed.TotalMilliseconds);statuses.Add(response.StatusCode);}
+                return statuses;
+            }));
+            Assert.All(responses.SelectMany(s=>s),s=>Assert.Equal(HttpStatusCode.OK,s));
+            var sorted=samples.Order().ToArray();
+            Console.WriteLine($"Local concurrency: 15 members, 150 authenticated history requests, 10000 stored messages, {elapsed.ElapsedMilliseconds} ms total, p50={sorted[74]:F1} ms, p95={sorted[142]:F1} ms; Supabase identity stub, real PostgreSQL.");
+            await db.Messages.Where(m=>m.ChannelId==channelId).ExecuteDeleteAsync();
+            await db.Channels.Where(c=>c.Id==channelId).ExecuteDeleteAsync();
+        }finally{foreach(var client in members)client.Dispose();}
+    }
+
+    [Fact]
+    public async Task OperationsCoalescesConcurrentProbes()
+    {
+        var cache=new Discorda.Api.Admin.OperationsCache();var calls=0;
+        var results=await Task.WhenAll(Enumerable.Range(0,20).Select(_=>cache.Get(async()=>{Interlocked.Increment(ref calls);await Task.Delay(20);return (object)new{ok=true};},CancellationToken.None)));
+        Assert.Equal(1,calls);Assert.All(results,item=>Assert.Same(results[0],item));
+    }
+
     [Theory]
     [InlineData("role; DROP SCHEMA discorda CASCADE")]
     [InlineData("role\"; GRANT ALL ON SCHEMA discorda TO PUBLIC;--")]

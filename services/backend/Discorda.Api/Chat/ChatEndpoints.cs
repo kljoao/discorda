@@ -11,7 +11,7 @@ public sealed record EditMessage(string Body, long Version);
 public sealed record NewChannel(string Name);
 public sealed record EditProfile(string DisplayName);
 public sealed record MessageView(string Id, Guid ChannelId, Guid AuthorId, string AuthorName, Guid ClientId,
-    string Body, string? ReplyToId, DateTimeOffset CreatedAt, DateTimeOffset? EditedAt, DateTimeOffset? DeletedAt, long Version);
+    string Body, string? ReplyToId, DateTimeOffset CreatedAt, DateTimeOffset? EditedAt, DateTimeOffset? DeletedAt, long Version, Guid? ReplyAuthorId);
 
 public static class ChatEndpoints
 {
@@ -25,7 +25,7 @@ public static class ChatEndpoints
         join author in db.Users on message.AuthorId equals author.Id
         select new MessageView(message.Id.ToString(), message.ChannelId, message.AuthorId, author.DisplayName, message.ClientId,
             message.DeletedAt == null ? message.Body : "", message.ReplyToId == null ? null : message.ReplyToId.ToString(),
-            message.CreatedAt, message.EditedAt, message.DeletedAt, message.Version);
+            message.CreatedAt, message.EditedAt, message.DeletedAt, message.Version, db.Messages.Where(parent => parent.Id == message.ReplyToId && parent.ChannelId == message.ChannelId).Select(parent => (Guid?)parent.AuthorId).FirstOrDefault());
 
     public static void MapChat(this WebApplication app)
     {
@@ -74,8 +74,12 @@ public static class ChatEndpoints
             if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 2) return Results.Forbid();
             var name = input.Name?.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || name.Any(char.IsControl)) return Results.BadRequest();
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891321)", ct);
+            if (await db.Channels.CountAsync(c => c.WorkspaceId == GroupId && c.ArchivedAt == null, ct) >= 100) return Results.BadRequest();
             var channel = new Channel { WorkspaceId = GroupId, Name = name, Type = ChannelType.Text, SortOrder = 10 };
             db.Channels.Add(channel); Permissions.Audit(db, ctx, "channel.create", channel.Id.ToString()); await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             await live.Publish("channels", new { channel.Id });
             return Results.Ok(new { channel.Id, channel.Name });
         });

@@ -1,0 +1,23 @@
+import {chromium,expect,test} from '@playwright/test';
+import {createServer} from 'vite';
+test('stream popout displays video without duplicating audio and closes when removed',async()=>{
+ const server=await createServer({server:{port:5186,strictPort:true}});await server.listen();
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const page=await browser.newPage();await page.goto('http://localhost:5186/tests/e2e/stream.fixture.html');
+  const waiting=page.waitForEvent('popup');await page.getByRole('button',{name:'Abrir em outra janela'}).first().click();const popup=await waiting;
+  await expect(popup).toHaveTitle('Amigo · Tela · Discorda');
+  await expect.poll(()=>popup.locator('video').evaluate(el=>(el as HTMLVideoElement).videoWidth)).toBe(640);
+  expect(await popup.locator('video').evaluate(el=>({muted:(el as HTMLVideoElement).muted,controls:(el as HTMLVideoElement).controls}))).toEqual({muted:true,controls:false});
+  await page.getByRole('button',{name:'Alternar chat'}).click();
+  expect(popup.isClosed()).toBe(false);
+  await page.getByLabel('Mensagem').fill('O chat continua disponível');
+  await popup.screenshot({path:'test-results/community-stream-window.png'});
+  await page.getByRole('button',{name:'Alternar chat'}).click();
+  const nextWaiting=page.waitForEvent('popup');await page.getByRole('button',{name:'Abrir em outra janela'}).nth(1).click();const next=await nextWaiting;
+  await expect.poll(()=>popup.isClosed()).toBe(true);await expect(next).toHaveTitle('Outra pessoa · Tela · Discorda');
+  await expect(next.locator('video')).toHaveCount(1);
+  await page.getByRole('button',{name:'Remover primeira pessoa'}).click();expect(next.isClosed()).toBe(false);
+  await page.getByRole('button',{name:'Encerrar transmissão'}).click();await expect.poll(()=>next.isClosed()).toBe(true);
+ }finally{await browser.close();await server.close();}
+});

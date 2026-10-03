@@ -19,7 +19,7 @@ test('built desktop loads with a sandboxed preload and functional health action'
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
     expect(await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined');
-    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['shortcuts','onShortcut','admin','notifyMessage','diagnostics','reconnectLive','updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
+    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['servers','onInvite','shortcuts','onShortcut','admin','notifyMessage','diagnostics','reconnectLive','updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
     // Electron exposes this diagnostic method at runtime but omits it from its public types.
     const preferences = await app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents as unknown as {
@@ -52,6 +52,13 @@ test('built desktop loads with a sandboxed preload and functional health action'
     await page.setViewportSize({width:640,height:780});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     await expect(page.getByRole('button',{name:'Conectar ao grupo',exact:true})).toBeVisible();
+    await app.evaluate(({app})=>{app.emit('open-url',{preventDefault(){}},'discorda://join?server=https%3A%2F%2Fgroup.example.test');});
+    await expect(page.getByRole('dialog',{name:'Seus servidores',exact:true})).toBeVisible();
+    await expect(page.getByLabel('Endereço ou convite do servidor',{exact:true})).toHaveValue('https://group.example.test');
+    expect(await page.evaluate(()=>window.open('https://example.test','discorda-stream')===null)).toBe(true);
+    expect(await page.evaluate(()=>window.open('about:blank','discorda-stream')===null)).toBe(true);
+    await page.keyboard.press('Escape');
+
   } finally { await app.close(); }
 });
 

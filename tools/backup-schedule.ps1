@@ -18,18 +18,24 @@ switch($Action){
  'status' { $task=Get-ScheduledTask -TaskName $taskName -ErrorAction SilentlyContinue;if($task){'Backup automático: '+$task.State}else{'Backup automático: desativado.'} }
  'run' {
   $statePath=Join-Path $root '.discorda/backup-status.json'
-  $before=@(Get-ChildItem -LiteralPath (Join-Path $root '.discorda/backups') -Directory -ErrorAction SilentlyContinue|Select-Object -ExpandProperty Name)
+  $before=[Collections.Generic.HashSet[string]]::new([StringComparer]::OrdinalIgnoreCase)
+  Get-ChildItem -LiteralPath (Join-Path $root '.discorda/backups') -Directory -ErrorAction SilentlyContinue|ForEach-Object {[void]$before.Add($_.Name)}
   $lastVerified=$null
   if(Test-Path -LiteralPath $statePath){try{$lastVerified=(Get-Content -LiteralPath $statePath -Raw|ConvertFrom-Json).lastVerified}catch{}}
   try {
    & (Join-Path $PSScriptRoot 'host-operations.ps1') -Action backup | Out-Null
-   $folder=Get-ChildItem -LiteralPath (Join-Path $root '.discorda/backups') -Directory|Where-Object {$_.Name -notin $before -and (Test-Path -LiteralPath (Join-Path $_.FullName 'manifest.json'))}|Sort-Object CreationTimeUtc -Descending|Select-Object -First 1
+   $folder=$null
+   Get-ChildItem -LiteralPath (Join-Path $root '.discorda/backups') -Directory|ForEach-Object {
+    if(!$before.Contains($_.Name) -and (!$folder -or $_.CreationTimeUtc -gt $folder.CreationTimeUtc) -and (Test-Path -LiteralPath (Join-Path $_.FullName 'manifest.json'))){$folder=$_}
+   }
    if(!$folder){throw 'Nenhum backup completo foi criado.'}
    if(!$lastVerified -or ([DateTime]::UtcNow-[DateTime]::Parse($lastVerified)).TotalDays -ge 7){& (Join-Path $PSScriptRoot 'verify-backup.ps1') -Backup (Join-Path $folder.FullName 'database.dump')|Out-Null;$lastVerified=[DateTime]::UtcNow.ToString('o')}
    @{status='ok';checkedAt=[DateTime]::UtcNow.ToString('o');lastVerified=$lastVerified}|ConvertTo-Json|Set-Content -LiteralPath $statePath
+   try {& (Join-Path $PSScriptRoot 'publish-backup-status.ps1') -StatusPath $statePath}catch{Write-Warning 'Backup concluído, mas o resumo não pôde ser publicado no painel.'}
    'Backup automático concluído.'
   } catch {
    @{status='error';checkedAt=[DateTime]::UtcNow.ToString('o');lastVerified=$lastVerified}|ConvertTo-Json|Set-Content -LiteralPath $statePath
+   try {& (Join-Path $PSScriptRoot 'publish-backup-status.ps1') -StatusPath $statePath}catch{Write-Warning 'O resumo do backup não pôde ser publicado no painel.'}
    throw 'Backup ou verificação falhou. Confira Docker, espaço em disco e execute o backup pelo painel.'
   }
  }

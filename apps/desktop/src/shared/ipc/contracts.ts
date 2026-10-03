@@ -3,6 +3,7 @@ export interface AppInfo {
   version: string;
   platform: string;
   serverConfigured?:boolean;
+  serverId?:string;
 }
 
 export interface ServiceStatus {
@@ -12,9 +13,13 @@ export interface ServiceStatus {
 }
 
 export interface DiagnosticReport {performance?:{cpuPercent:number;memoryMiB:number;processes:number};version:string;platform:string;checkedAt:string;api:ServiceStatus['api'];database:ServiceStatus['database'];chat:'connected'|'reconnecting'|'offline';attempts:number;lastConnected?:string;callActive:boolean;update:UpdateState['status'];}
-export type AdminAction={kind:'settings'|'users'|'network'|'firewall'}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
+export type ServerAction={kind:'list'|'invite'|'dismissInvite'}|{kind:'select'|'remove';id:string}|{kind:'rename';id:string;name:string};
+export interface ServerList {servers:{id:string;name:string;address:string;current:boolean}[];pendingInvite?:string;invite?:string}
+export type AdminAction={kind:'settings'|'users'|'network'|'firewall'|'operations'}|{kind:'setup';name:string;textChannels:string[];voiceChannels:string[]}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
 export interface ShortcutSettings {enabled:boolean;pushToTalk:boolean;mute:string;talk:string}
 export interface DesktopApi {
+  servers(action:ServerAction):Promise<ServerList>;
+  onInvite(listener:()=>void):()=>void;
   shortcuts(settings:ShortcutSettings):Promise<void>;
   onShortcut(listener:(event:'mute'|'unavailable'|boolean)=>void):()=>void;
   admin(action:AdminAction):Promise<ChatResult>;
@@ -54,6 +59,7 @@ export type AuthState =
   | { status: 'signed-out' | 'unavailable' | 'signing-in'; message?: string };
 
 export const IPC = {
+  servers:'app:servers',inviteEvent:'app:invite',
   shortcuts:'app:shortcuts',shortcutEvent:'app:shortcut-event',
   audioStatus:'media:audio-status', devicePermissions:'media:permissions', audioApplications:'media:applications', applicationAudio:'media:application-audio', applicationAudioData:'media:audio-data', applicationAudioEnd:'media:audio-end',
   microphoneTest: 'media:test', media: 'media:action', captureSources: 'media:sources', selectCapture: 'media:select',
@@ -67,7 +73,7 @@ export const IPC = {
   voiceActivity:'live:voice-activity', liveStart: 'live:start', liveStop: 'live:stop', liveActivity: 'live:activity', liveEvent: 'live:event',
 } as const;
 
-export interface ChatMessage { id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
+export interface ChatMessage { replyAuthorId?:string|null; id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
 export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Admin' | 'Moderator' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string }[]; }
 export type ManagementAction = {kind:'manageMembers'} | {kind:'audit';before?:string} | {kind:'role';userId:string;role:'Admin'|'Moderator'|'Member'} | {kind:'moderateVoice';userId:string;channelId?:string};
 export type ChatAction = ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}

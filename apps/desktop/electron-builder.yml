@@ -38,3 +38,7 @@ publish:
   owner: kljoao
   repo: discorda
   releaseType: release
+
+protocols:
+  - name: Convite Discorda
+    schemes: [discorda]

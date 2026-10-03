@@ -65,6 +65,8 @@ public sealed class ChatTests(AuthFixture fixture) : IClassFixture<AuthFixture>
         await using var app = fixture.App(); using var owner = await Member(app); using var other = await Member(app);
         var sent = await owner.PostAsJsonAsync(Route(General), new SendMessage(Guid.NewGuid(), "private edit", null)); sent.EnsureSuccessStatusCode();
         var message = (await sent.Content.ReadFromJsonAsync<MessageView>())!;
+        var response=await other.PostAsJsonAsync(Route(General),new SendMessage(Guid.NewGuid(),"reply",long.Parse(message.Id)));
+        response.EnsureSuccessStatusCode();Assert.Equal(message.AuthorId,(await response.Content.ReadFromJsonAsync<MessageView>())!.ReplyAuthorId);
         Assert.Equal(HttpStatusCode.Conflict, (await other.PutAsJsonAsync(Route(General) + "/" + message.Id, new EditMessage("overwrite", 1))).StatusCode);
         Assert.Equal(HttpStatusCode.Conflict, (await other.DeleteAsync(Route(General) + "/" + message.Id + "?version=1")).StatusCode);
         Assert.Equal(HttpStatusCode.NotFound, (await other.GetAsync(Route(Guid.NewGuid()))).StatusCode);

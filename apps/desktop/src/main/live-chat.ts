@@ -1,3 +1,5 @@
+import {serverWebSocket} from './server-transport';
+import type {ServerConfig} from './server-config';
 import { HubConnectionBuilder, HubConnectionState, HttpTransportType, LogLevel, type HubConnection } from '@microsoft/signalr';
 import type { LiveEvent } from '../shared/ipc/contracts';
 
@@ -18,7 +20,7 @@ export class LiveChatClient {
   private typingAt = 0;
   private lastPulse = 0;
   private pulsing = false;
-  constructor(private readonly origin: string | undefined, private readonly token: () => Promise<string>, private readonly emit: (event: LiveEvent) => void, private readonly away: () => boolean) {}
+  constructor(private readonly origin: string | undefined, private readonly token: () => Promise<string>, private readonly emit: (event: LiveEvent) => void, private readonly away: () => boolean, private readonly serverConfig?:ServerConfig) {}
   start() {
     this.wanted = true;
     if (!this.timer) this.timer = setInterval(() => { void this.ensure(); if (Date.now() - this.lastPulse > 10000) void this.pulse(); }, 2000);
@@ -40,9 +42,11 @@ export class LiveChatClient {
     await this.starting;
   }
   private create() {
-    const connection = new HubConnectionBuilder().withUrl(`${this.origin}/api/v1/live`, {
+    const options={
       accessTokenFactory: this.token, transport: HttpTransportType.WebSockets, skipNegotiation: true,
-    }).configureLogging(LogLevel.None).withAutomaticReconnect([0, 2000, 5000, 10000]).build();
+      WebSocket:serverWebSocket(this.serverConfig),
+    };
+    const connection = new HubConnectionBuilder().withUrl(`${this.origin}/api/v1/live`,options).configureLogging(LogLevel.None).withAutomaticReconnect([0, 2000, 5000, 10000]).build();
     connection.on('ChatEvent', (event: LiveEvent) => {
       if (this.wanted && this.connection === connection && ['message', 'presence', 'channels', 'profile', 'voice', 'annotations', 'moderation'].includes(event.kind)) this.emit(event);
     });

@@ -30,7 +30,7 @@ public sealed class LiveChat(IHubContext<ChatHub> hub, IServiceScopeFactory scop
     public static PresenceMember[] Snapshot(IEnumerable<LivePeer> live, DateTimeOffset now) => live
         .Where(x => x.SeenAt > now.AddSeconds(-45) && x.ExpiresAt > now)
         .GroupBy(x => x.UserId).Select(group => new PresenceMember(group.Key, group.First().Name,
-            group.Any(x => !x.Away) ? "online" : "away", group.Where(x => x.TypingUntil > now).OrderByDescending(x => x.TypingUntil).FirstOrDefault()?.ChannelId, group.First().AvatarUrl))
+            group.Any(x => !x.Away) ? "online" : "away", group.Where(x => x.TypingUntil > now).MaxBy(x => x.TypingUntil)?.ChannelId, group.First().AvatarUrl))
         .OrderBy(x => x.Name).ThenBy(x => x.Id).ToArray();
 
     private async Task<LivePeer[]> Authorized(CancellationToken ct)

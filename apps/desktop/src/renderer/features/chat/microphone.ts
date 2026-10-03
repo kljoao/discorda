@@ -13,6 +13,7 @@ const modules = new WeakMap<AudioContext, Promise<void>>();
 export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, AudioProcessorOptions> {
   name = 'discorda-microphone';
   processedTrack?: MediaStreamTrack;
+  private generation=0;
   private source?: MediaStreamAudioSourceNode;
   private node?: AudioWorkletNode;
   private destination?: MediaStreamAudioDestinationNode;
@@ -21,9 +22,11 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   talk(pressed:boolean){this.node?.port.postMessage({talk:pressed});}
   configure(settings: MicrophoneSettings) { this.settings = settings; this.node?.port.postMessage(settings); }
   async init({audioContext,track}: AudioProcessorOptions) {
+    const generation=++this.generation;
     let loaded = modules.get(audioContext);
-    if (!loaded) { loaded = audioContext.audioWorklet.addModule(new URL('./microphone-worklet.js',import.meta.url).href); modules.set(audioContext,loaded); }
+    if (!loaded) { loaded = audioContext.audioWorklet.addModule(new URL('./microphone-worklet.js',import.meta.url).href).catch(error=>{modules.delete(audioContext);throw error;}); modules.set(audioContext,loaded); }
     await loaded;
+    if(generation!==this.generation)throw new Error('Inicialização do microfone cancelada.');
     this.source = audioContext.createMediaStreamSource(new MediaStream([track]));
     this.node = new AudioWorkletNode(audioContext,'discorda-microphone');
     this.destination = audioContext.createMediaStreamDestination();
@@ -35,6 +38,7 @@ export class MicrophoneProcessor implements TrackProcessor<Track.Kind.Audio, Aud
   }
   async restart(options: AudioProcessorOptions) { await this.destroy(); await this.init(options); }
   async destroy() {
+    this.generation++;
     this.source?.disconnect(); this.node?.disconnect(); this.destination?.disconnect();
     if (this.node) {this.node.port.postMessage({stop:true}); this.node.port.onmessage = null; this.node.port.close();}
     this.processedTrack?.stop(); this.processedTrack=undefined; this.source=undefined; this.node=undefined; this.destination=undefined;

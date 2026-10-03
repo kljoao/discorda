@@ -1,3 +1,5 @@
+import {Servers} from '../Servers';
+import {scopedKey} from '../../lib/server-scope';
 import {useChatAttention} from './attention';
 import {ManagementPanel} from './ManagementPanel';
 import {HistoryTools,chatRequest,reactionEmojis,type Annotations} from './ChatTools';
@@ -93,7 +95,7 @@ export function Chat({ account }: { account: ReactNode }) {
   const channel = workspace?.channels.find(c => c.id === selected);
   return <div className={'chat-shell'+(!membersOpen?' members-collapsed':'')}>
     <aside className="chat-sidebar"><div className="sidebar-scroll"><div className="brand"><MessageCircle /> discorda<span className="brand-dot">.</span></div>
-      {workspace&&workspace.role!=='Member'&&<button className="admin-entry" onClick={()=>setAdminOpen(true)}>Administrar servidor</button>}{adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas quando me mencionarem</label>}</details><h2>{workspace?.name ?? 'Seu grupo'}</h2><div className="chat-channel-label">CANAIS DE TEXTO{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
+      <Servers/>{workspace&&workspace.role!=='Member'&&<button className="admin-entry" onClick={()=>setAdminOpen(true)}>Administrar servidor</button>}{adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas menções e respostas</label>}</details><h2>{workspace?.name ?? 'Seu grupo'}</h2><div className="chat-channel-label">CANAIS DE TEXTO{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
       {newChannel && <form className="channel-form" onSubmit={createChannel}><input autoFocus aria-label="Nome do canal" value={name} maxLength={80} onChange={e => setName(e.target.value)} /><button disabled={creating || !name.trim()}>Criar</button></form>}
       <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={selected === item.id ? 'selected' : ''} aria-current={selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>)}</nav>
       <Voice presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} onChannel={setVoiceChannel} self={presence.find(p=>p.id===workspace?.userId)}/>
@@ -104,7 +106,7 @@ export function Chat({ account }: { account: ReactNode }) {
       {error && <div className="chat-error" role="alert">{error} <button onClick={() => void load()}>Tentar novamente</button></div>}
       {voiceChannel&&<nav className="content-tabs" aria-label="Visualização"><button aria-pressed={!showMedia} onClick={()=>setShowMedia(false)}>Chat</button><button aria-pressed={showMedia} onClick={()=>setShowMedia(true)}>Chamada · {voiceChannel}</button></nav>}
       <div ref={setMediaHost} className="call-stage" hidden={!showMedia}/>
-      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
+      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
     </main>
     <aside id="members-list" className="members-rail" hidden={!membersOpen} aria-label="Membros disponíveis"><div className="members-heading"><h2>Pessoas do grupo</h2><span>{presence.length}</span></div><label className="member-search"><Search size={15}/><input type="search" aria-label="Buscar membros" placeholder="Buscar pessoa" maxLength={80} value={memberQuery} onChange={e=>setMemberQuery(e.target.value)}/></label>
       {(['online','away','offline'] as const).map(status=>{
@@ -123,14 +125,19 @@ export function Chat({ account }: { account: ReactNode }) {
   </div>;
 }
 
-function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
+function Conversation({ readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  const historicalRef=useRef(false);
+  const [historical,setHistorical]=useState(false);
+  const [boundary,setBoundary]=useState<string>();
+  useEffect(()=>{if(readReady&&boundary===undefined)setBoundary(readMarker??'0');},[readReady,readMarker,boundary]);
+  const firstUnread=useMemo(()=>boundary===undefined?-1:messages.findIndex(message=>message.authorId!==userId&&BigInt(message.id)>BigInt(boundary)),[messages,boundary,userId]);
   const composer=useRef<HTMLTextAreaElement>(null);
   const [emojis,setEmojis]=useState(false);
   const [annotations,setAnnotations]=useState<Annotations>({reactions:[],pins:[]});
   const [reactionFor,setReactionFor]=useState<string>();
   const [mentionOpen,setMentionOpen]=useState(false);
-  const draftKey='discorda:draft:'+workspaceId+':'+userId+':'+channel.id;
+  const draftKey=scopedKey('draft:'+workspaceId+':'+userId+':'+channel.id);
   const presenceIndex=useMemo(()=>new Map(presence.map(p=>[p.id,p])),[presence]);
   const messageIndex=useMemo(()=>new Map(messages.map(m=>[m.id,m])),[messages]);
   const reactionIndex=useMemo(()=>{const map=new Map<string,Annotations['reactions']>();for(const r of annotations.reactions){const list=map.get(r.id)??[];list.push(r);map.set(r.id,list);}return map;},[annotations]);
@@ -170,12 +177,21 @@ function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendin
   const initialLoaded = useRef(false);
   const currentMessages = useRef(messages); currentMessages.current = messages;
   const needsSync = useRef(false);
+  function receive(current:ChatMessage[],incoming:ChatMessage[]){
+    const last=current.at(-1)?.id;
+    if(historicalRef.current&&last)incoming=incoming.filter(m=>BigInt(m.id)<=BigInt(last));
+    return mergeMessages(current,incoming).slice(-500);
+  }
+  function latest(){historicalRef.current=false;setHistorical(false);nearBottom.current=true;currentMessages.current=[];setMessages([]);initialLoaded.current=false;void synchronize();}
+  useEffect(()=>{const ids=new Set(messages.map(m=>m.id));annotationCache.current=new Set([...annotationCache.current].filter(id=>ids.has(id)));setAnnotations(old=>({reactions:old.reactions.filter(r=>ids.has(r.id)),pins:old.pins.filter(id=>ids.has(id))}));},[messages]);
   async function history(before?: string) {
     if (fetching.current) return; fetching.current = true;
     try {
       const page = await request<{items: ChatMessage[]; hasMore: boolean}>({kind: 'history', channelId: channel.id, before});
       if (!alive.current) return;
-      setMessages(current => mergeMessages(current, page.items));
+      const merged=mergeMessages(currentMessages.current,page.items);
+      if(before&&merged.length>500){historicalRef.current=true;setHistorical(true);}
+      setMessages(before?merged.slice(0,500):merged.slice(-500));
       if (before || !initialLoaded.current) setHasMore(page.hasMore);
       initialLoaded.current = true;
       setError('');
@@ -183,14 +199,15 @@ function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendin
     finally { fetching.current = false; if (alive.current) { setLoading(false); setOlderBusy(false); if (needsSync.current) { needsSync.current = false; void synchronize(); } } }
   }
   async function synchronize() {
+    if(historicalRef.current)return;
     if (fetching.current) { needsSync.current = true; return; }
     fetching.current = true;
     const oldest = currentMessages.current[0]?.id;
     let before: string | undefined;
     const incoming:ChatMessage[]=[];
     try {
-      // Re-read all loaded history, including edits/deletions and gaps larger than one page.
-      for (;;) {
+      // Reconcile a bounded viewport. Older history stays available through pagination/search.
+      for (let pageNumber=0;pageNumber<10;pageNumber++) {
         const page = await request<{items: ChatMessage[]; hasMore: boolean}>({kind: 'history', channelId: channel.id, before});
         if (!alive.current) return;
         incoming.push(...page.items);
@@ -204,17 +221,17 @@ function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendin
         await new Promise(resolve => setTimeout(resolve, 600));
         if (!alive.current) return;
       }
-      setMessages(current=>mergeMessages(current,incoming));
+      setMessages(current=>receive(current,incoming));
       initialLoaded.current = true; setError('');
     } catch (e) { if (alive.current) setError(errorMessage(e)); }
-    finally { fetching.current = false; if (alive.current) setLoading(false); }
+    finally { fetching.current = false; if (alive.current) {setLoading(false);if(needsSync.current){needsSync.current=false;void synchronize();}} }
   }
   useEffect(() => {
     alive.current = true;
     const off = window.discorda?.onLiveEvent((event: LiveEvent) => {
       if (!alive.current) return;
       if (event.kind === 'profile') setMessages(current => current.map(m => m.authorId === event.data.userId ? {...m, authorName:event.data.displayName} : m));
-      if (event.kind === 'message' && event.data.channelId === channel.id) setMessages(current => mergeMessages(current, [event.data]));
+      if (event.kind === 'message' && event.data.channelId === channel.id) setMessages(current => receive(current, [event.data]));
       if (event.kind === 'connection' && event.data === 'connected') void synchronize();
     });
     void history(); void window.discorda?.liveActivity(channel.id, false);
@@ -222,7 +239,7 @@ function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendin
     return () => { alive.current = false; off?.(); clearInterval(timer); void window.discorda?.liveActivity(channel.id, false); };
   }, []);
   useEffect(() => { if (nearBottom.current) list.current?.scrollTo({ top: list.current.scrollHeight }); }, [messages]);
-  useEffect(()=>{const mark=()=>{const last=currentMessages.current.at(-1);if(last&&visibleRef.current&&nearBottom.current&&document.visibilityState==='visible'&&document.hasFocus())readCallback.current(last.id);};mark();window.addEventListener('focus',mark);document.addEventListener('visibilitychange',mark);return()=>{window.removeEventListener('focus',mark);document.removeEventListener('visibilitychange',mark);};},[messages,visible,atBottom]);
+  useEffect(()=>{const mark=()=>{const last=currentMessages.current.at(-1);if(!historicalRef.current&&readReady&&last&&visibleRef.current&&nearBottom.current&&document.visibilityState==='visible'&&document.hasFocus())readCallback.current(last.id);};mark();window.addEventListener('focus',mark);document.addEventListener('visibilitychange',mark);return()=>{window.removeEventListener('focus',mark);document.removeEventListener('visibilitychange',mark);};},[messages,visible,atBottom,readReady]);
   function changeDraft(value: string) { setDraft(value); drafts.set(channel.id, value); try{if(value)localStorage.setItem(draftKey,value);else localStorage.removeItem(draftKey);}catch{} void window.discorda?.liveActivity(channel.id, value.trim().length > 0); }
   async function submit(event: React.FormEvent) {
     event.preventDefault(); if (busy || !draft.trim()) return; setBusy(true); setError('');
@@ -233,23 +250,25 @@ function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendin
       const saved = await request<ChatMessage>(action);
       drafts.delete(channel.id); pendingSends.delete(channel.id);
       if (!alive.current) return;
-      nearBottom.current = true; setMessages(current => mergeMessages(current, [saved])); changeDraft(''); setEdit(undefined); setReply(undefined); setPending(undefined);
+      if(historicalRef.current)latest();nearBottom.current = true; setMessages(current => receive(current, [saved])); changeDraft(''); setEdit(undefined); setReply(undefined); setPending(undefined);
     } catch (e) { if (alive.current) setError(errorMessage(e)); }
     finally { if (alive.current) {setBusy(false);requestAnimationFrame(()=>composer.current?.focus());} }
   }
   async function remove(message: ChatMessage) {
     if (busy) return; setBusy(true);
-    try { const saved = await request<ChatMessage>({kind: 'delete', channelId: channel.id, id: message.id, version: message.version}); if (alive.current) { setMessages(current => mergeMessages(current, [saved])); setRemoving(undefined); } }
+    try { const saved = await request<ChatMessage>({kind: 'delete', channelId: channel.id, id: message.id, version: message.version}); if (alive.current) { setMessages(current => receive(current, [saved])); setRemoving(undefined); } }
     catch (e) { if (alive.current) setError(errorMessage(e)); }
     finally { if (alive.current) setBusy(false); }
   }
   return <section className="conversation" aria-label={`Canal ${channel.name}`}>
-    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" aria-pressed={muted} onClick={toggleMuted}>{muted?'Ativar avisos deste canal':'Silenciar este canal'}</button><HistoryTools channelId={channel.id} onSelect={message=>{setMessages(current=>mergeMessages(current,[message]));nearBottom.current=false;requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}}/></div>
+    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" aria-pressed={muted} onClick={toggleMuted}>{muted?'Ativar avisos deste canal':'Silenciar este canal'}</button><HistoryTools channelId={channel.id} onSelect={message=>{historicalRef.current=true;setHistorical(true);setMessages([message]);setHasMore(true);nearBottom.current=false;requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}}/></div>
+    {firstUnread>=0&&<div className="unread-banner"><span>Novas mensagens desde sua última leitura</span><button onClick={()=>document.getElementById('message-'+messages[firstUnread].id)?.scrollIntoView({block:'start'})}>Ir para a primeira</button><button onClick={()=>setBoundary(messages.at(-1)?.id??'0')}>Dispensar</button></div>}
     <div className="message-list" ref={list} onScroll={() => { const node = list.current!; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;setAtBottom(nearBottom.current); }}>
-      {hasMore && <button className="older-button" disabled={olderBusy || loading} onClick={() => { nearBottom.current = false; setOlderBusy(true); void history(messages[0]?.id); }}>Carregar anteriores</button>}
+      {historical&&<div className="unread-banner" role="status">Você está consultando o histórico.</div>}
+      {(hasMore||messages.length===500) && <button className="older-button" disabled={olderBusy || loading} onClick={() => { nearBottom.current = false; setOlderBusy(true); void history(messages[0]?.id); }}>Carregar anteriores</button>}
       {messages.length === 0 && <div className="chat-empty"><Hash size={42} /><h2>Bem-vindo a #{channel.name}</h2><p>{loading ? 'Carregando mensagens…' : 'A conversa começa com a primeira mensagem.'}</p></div>}
-      {messages.map((message,messagePosition) => <article className="chat-message" id={"message-"+message.id} key={message.id} aria-label={`Mensagem de ${message.authorName}`}>
-        {(messagePosition===0||new Date(messages[messagePosition-1].createdAt).toDateString()!==new Date(message.createdAt).toDateString())&&<div className="message-date"><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleDateString('pt-BR',{day:'numeric',month:'long',year:'numeric'})}</time></div>}<div className="message-avatar"><Avatar url={presenceIndex.get(message.authorId)?.avatarUrl} name={message.authorName}/></div><div className="message-content">
+      {messages.map((message,messagePosition) => <article className={'chat-message'+(!message.deletedAt&&message.body.includes('<@'+userId+'>')?' is-mentioned':'')+(!message.deletedAt&&message.replyAuthorId===userId?' is-reply-to-me':'')} id={"message-"+message.id} key={message.id} aria-label={`Mensagem de ${message.authorName}`}>
+        {messagePosition===firstUnread&&<div className="unread-divider">Novas mensagens</div>}{(messagePosition===0||new Date(messages[messagePosition-1].createdAt).toDateString()!==new Date(message.createdAt).toDateString())&&<div className="message-date"><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleDateString('pt-BR',{day:'numeric',month:'long',year:'numeric'})}</time></div>}<div className="message-avatar"><Avatar url={presenceIndex.get(message.authorId)?.avatarUrl} name={message.authorName}/></div><div className="message-content">
           <div className="message-meta"><strong>{message.authorName}</strong><time dateTime={message.createdAt} title={new Date(message.createdAt).toLocaleString('pt-BR')}>{new Date(message.createdAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</time>{message.editedAt && !message.deletedAt && <small>editada</small>}</div>
           {message.replyToId && <div className="message-reply"><Reply size={13} />{messageIndex.get(message.replyToId)?.body.slice(0, 100) || 'Resposta a uma mensagem anterior'}</div>}
           <p className={message.deletedAt ? 'message-deleted' : ''}>{message.deletedAt ? 'Mensagem excluída' : message.body.split(/(https?:\/\/[^\s<>]+|<@[0-9a-f-]{36}>)/gi).map((part, index) => /^<@/.test(part)?<mark key={index}>@{presenceIndex.get(part.slice(2,-1))?.name??'membro'}</mark>: /^https?:\/\//.test(part) ? <button key={index} className="message-link" title="Abrir no navegador" onClick={() => void request({kind: 'openLink', url: part}).catch(e => setError(errorMessage(e)))}>{part}</button> : part)}</p>
@@ -261,7 +280,7 @@ function Conversation({ canModerate,workspaceId, channel, userId, drafts, pendin
       </article>)}
     </div>
     {error && <div className="chat-error" role="alert">{error} <button onClick={() => void history()}>Atualizar</button></div>}
-    <div className="recent-messages">{!atBottom&&<button onClick={()=>{nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
+    <div className="recent-messages">{(!atBottom||historical)&&<button onClick={()=>{if(historicalRef.current)latest();nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
     <form className="message-composer" onSubmit={submit} onKeyDown={event=>{if(event.key==='Escape'){setEmojis(false);setMentionOpen(false);composer.current?.focus();}}}>
       {(reply || edit) && <div className="composer-context">{edit ? 'Editando mensagem' : `Respondendo a ${reply?.authorName}`}<button type="button" disabled={busy || !!pending} aria-label="Cancelar resposta ou edição" onClick={() => { setReply(undefined); setEdit(undefined); changeDraft(''); }}><X size={14} /></button></div>}
       <div className="composer-row"><textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={draft} readOnly={busy || !!pending} onChange={event => changeDraft(event.target.value)} onKeyDown={event => { if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button type="button" title="Mencionar pessoa" aria-label="Mencionar pessoa" aria-expanded={mentionOpen} onClick={()=>{setMentionOpen(!mentionOpen);setEmojis(false);}}>@</button><button type="button" title="Escolher emoji" aria-label="Escolher emoji" aria-expanded={emojis} disabled={busy || !!pending} onClick={()=>{setEmojis(!emojis);setMentionOpen(false);}}><Smile size={20}/></button><button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>

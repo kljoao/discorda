@@ -26,8 +26,9 @@ describe('community security boundaries',()=>{
  it('keeps push-to-talk silent on missing or expired heartbeats',()=>{
   let Processor:any;const context=vm.createContext({sampleRate:48000,currentTime:0,AudioWorkletProcessor:class{port={onmessage:undefined as any,postMessage(){}};},registerProcessor:(_name:string,p:any)=>{Processor=p;}});
   vm.runInContext(readFileSync('src/renderer/features/chat/microphone-worklet.js','utf8'),context);
-  const processor=new Processor();processor.port.onmessage({data:{gain:1,gate:false,threshold:-50,pushToTalk:true}});
-  const input=[[new Float32Array(128).fill(0.5)]],output=[[new Float32Array(128)]];
+  const processor=new Processor();processor.port.onmessage({data:{gain:1,gate:true,threshold:-10,pushToTalk:true}});
+  // Quiet speech must pass while holding the key, even below the voice threshold.
+  const input=[[new Float32Array(128).fill(0.01)]],output=[[new Float32Array(128)]];
   processor.process(input,output);expect(output[0][0].every(v=>v===0)).toBe(true);
   processor.port.onmessage({data:{talk:true}});processor.process(input,output);expect(output[0][0].some(v=>v>0)).toBe(true);
   context.currentTime=1;for(let i=0;i<150;i++)processor.process(input,output);expect(Math.max(...output[0][0])).toBeLessThan(0.00001);

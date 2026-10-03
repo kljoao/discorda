@@ -1,10 +1,11 @@
+import {scopedKey} from '../../lib/server-scope';
 import { Track, type RemoteAudioTrack } from 'livekit-client';
 import { playCallSound, type CallSound } from './call-sounds';
 export type MemberVolume={voice:number;screen:number};
 export const defaultVolume:MemberVolume={voice:150,screen:100};
 export function clampVolume(value:number,fallback=150){return Number.isFinite(value)?Math.max(0,Math.min(400,value)):fallback;}
 export function readVolumes():Record<string,MemberVolume>{
- try {const data=JSON.parse(localStorage.getItem('discorda:member-volumes')??'{}');return Object.fromEntries(Object.entries(data).filter(([,v])=>v&&typeof v==='object').map(([id,v])=>[id,{voice:clampVolume((v as MemberVolume).voice),screen:clampVolume((v as MemberVolume).screen,100)}]));}catch{return {};}
+ try {const data=JSON.parse(localStorage.getItem(scopedKey('member-volumes'))??'{}');return Object.fromEntries(Object.entries(data).filter(([,v])=>v&&typeof v==='object').map(([id,v])=>[id,{voice:clampVolume((v as MemberVolume).voice),screen:clampVolume((v as MemberVolume).screen,100)}]));}catch{return {};}
 }
 // One output context/limiter per call; tracks have separate gains. Muting never relies on HTML volume.
 export class VoicePlayback {

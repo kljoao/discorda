@@ -94,6 +94,8 @@ Somente o IP exato do Caddy é confiável para os headers de encaminhamento. Se 
 
 ## Operação
 
+O proprietário pode consultar indicadores em **Administrar servidor → Acessos e rede do servidor → Operação do servidor**. O backup abaixo publica um resumo no volume de estado da API; o painel diferencia criação do dump de restauração testada. Veja os limites das métricas e instruções no [guia da comunidade](community.md).
+
 ```bash
 bash tools/vps.sh backup
 bash tools/vps.sh status
