@@ -1,4 +1,5 @@
 import {useEffect, useRef, useState} from 'react';
+import {MessageFiles} from './Attachments';
 import {Search, Pin, X} from 'lucide-react';
 import type {ChatAction, ChatMessage} from '../../../shared/ipc/contracts';
 
@@ -10,22 +11,24 @@ export async function chatRequest<T>(action:ChatAction):Promise<T> {
 export const reactionEmojis=['👍','❤️','😂','🎉','👀','🔥'];
 export interface Annotations {reactions:{id:string;emoji:string;count:number;mine:boolean}[];pins:string[]}
 
-export function HistoryTools({channelId,onSelect}:{channelId:string;onSelect:(message:ChatMessage)=>void}) {
+export function HistoryTools({channelId,onSelect,channels,members}:{channels:{id:string;name:string}[];members:{id:string;name:string}[];channelId:string;onSelect:(message:ChatMessage)=>void}) {
   const [mode,setMode]=useState<'search'|'pins'>(),[query,setQuery]=useState(''),[items,setItems]=useState<ChatMessage[]>([]),[more,setMore]=useState(false),[busy,setBusy]=useState(false),[error,setError]=useState(''),[searched,setSearched]=useState(false);
+  const [searchChannel,setSearchChannel]=useState(channelId),[author,setAuthor]=useState(''),[after,setAfter]=useState(''),[until,setUntil]=useState(''),[fileType,setFileType]=useState('');
+  const canSearch=!!(query.trim()||author||after||until||fileType);
   const revision=useRef(0),container=useRef<HTMLDivElement>(null);
   useEffect(()=>{if(!mode)return;const close=()=>{revision.current++;setBusy(false);setMode(undefined);};const key=(event:KeyboardEvent)=>{if(event.key==='Escape'){event.stopPropagation();close();}};const outside=(event:PointerEvent)=>{if(!container.current?.contains(event.target as Node))close();};document.addEventListener('keydown',key);document.addEventListener('pointerdown',outside);return()=>{document.removeEventListener('keydown',key);document.removeEventListener('pointerdown',outside);};},[mode]);
   useEffect(()=>()=>{revision.current++;},[]);
   async function load(next:'search'|'pins',before?:string){
-    if(next==='search'&&!query.trim())return;
+    if(next==='search'&&!canSearch)return;
     const ticket=++revision.current;setBusy(true);setError('');
-    try{const result=await chatRequest<{items:ChatMessage[];hasMore:boolean}>(next==='search'?{kind:'search',channelId,query:query.trim(),before}:{kind:'pins',channelId,before});if(ticket!==revision.current)return;setSearched(true);setItems(old=>before?[...old,...result.items]:result.items);setMore(result.hasMore);}
+    try{const result=await chatRequest<{items:ChatMessage[];hasMore:boolean}>(next==='search'?{kind:'search',channelId:searchChannel,query:query.trim(),before,author:author||undefined,after:after||undefined,until:until||undefined,fileType:fileType as 'any'|'image'|'video'|'audio'|'document'||undefined}:{kind:'pins',channelId,before});if(ticket!==revision.current)return;setSearched(true);setItems(old=>before?[...old,...result.items]:result.items);setMore(result.hasMore);}
     catch(e){if(ticket===revision.current)setError(e instanceof Error?e.message:'Não foi possível consultar.');}
     finally{if(ticket===revision.current)setBusy(false);}
   }
   return <div className="history-tools" ref={container}><button title="Buscar mensagens" aria-label="Buscar mensagens" aria-expanded={mode==='search'} onClick={()=>{revision.current++;setBusy(false);setMode('search');setSearched(false);setItems([]);setMore(false);}}><Search size={17}/></button><button title="Mensagens fixadas" aria-label="Mensagens fixadas" aria-expanded={mode==='pins'} onClick={()=>{setMode('pins');void load('pins');}}><Pin size={17}/></button>
-    {mode&&<section className="history-popover" aria-label={mode==='search'?'Buscar no canal':'Mensagens fixadas'}><header><strong>{mode==='search'?'Buscar neste canal':'Mensagens fixadas'}</strong><button aria-label="Fechar busca" onClick={()=>{revision.current++;setBusy(false);setMode(undefined);}}><X size={16}/></button></header>
-      {mode==='search'&&<form onSubmit={e=>{e.preventDefault();void load('search');}}><input autoFocus type="search" aria-label="Termos da busca" placeholder="Palavras da mensagem…" maxLength={120} value={query} onChange={e=>setQuery(e.target.value)}/><button disabled={busy||!query.trim()}>Buscar</button></form>}
-      <div className="history-results">{items.map(m=><button key={m.id} onClick={()=>{onSelect(m);setMode(undefined);}}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleDateString('pt-BR')}</time><p>{m.body}</p></button>)}</div>
+    {mode&&<section className="history-popover" aria-label={mode==='search'?'Buscar no canal':'Mensagens fixadas'}><header><strong>{mode==='search'?'Buscar mensagens e arquivos':'Mensagens fixadas'}</strong><button aria-label="Fechar busca" onClick={()=>{revision.current++;setBusy(false);setMode(undefined);}}><X size={16}/></button></header>
+      {mode==='search'&&<form onSubmit={e=>{e.preventDefault();void load('search');}}><input autoFocus type="search" aria-label="Termos da busca" placeholder="Palavras da mensagem…" maxLength={120} value={query} onChange={e=>{setQuery(e.target.value);setMore(false);}}/><div className="search-filters"><label>Canal<select aria-label="Canal da busca" value={searchChannel} onChange={e=>{setSearchChannel(e.target.value);setItems([]);setMore(false);}}>{channels.map(c=><option key={c.id} value={c.id}>#{c.name}</option>)}</select></label><label>Pessoa<select aria-label="Pessoa da busca" value={author} onChange={e=>{setAuthor(e.target.value);setMore(false);}}><option value="">Todas</option>{members.map(m=><option key={m.id} value={m.id}>{m.name}</option>)}</select></label><label>De<input aria-label="Data inicial" type="date" value={after} onChange={e=>{setAfter(e.target.value);setMore(false);}}/></label><label>Até<input aria-label="Data final" type="date" min={after||undefined} value={until} onChange={e=>{setUntil(e.target.value);setMore(false);}}/></label><label>Arquivo<select aria-label="Tipo de arquivo" value={fileType} onChange={e=>{setFileType(e.target.value);setMore(false);}}><option value="">Mensagens e arquivos</option><option value="any">Qualquer arquivo</option><option value="image">Imagens</option><option value="video">Vídeos</option><option value="audio">Áudio</option><option value="document">Documentos</option></select></label></div><small>Datas em UTC. Tipos de arquivo classificados pela extensão.</small><button disabled={busy||!canSearch}>Buscar</button></form>}
+      <div className="history-results">{items.map(m=><article key={m.id}><button onClick={()=>{onSelect(m);setMode(undefined);}}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleDateString('pt-BR')}</time><p>{m.body.replace(/<@[0-9a-f-]+>/gi,'@membro')}</p><span>Abrir no contexto</span></button><MessageFiles message={m}/></article>)}</div>
       {!busy&&!items.length&&<p>{mode==='pins'?'Nenhuma mensagem fixada.':searched?'Nenhuma mensagem encontrada. Tente outras palavras.':'Busque palavras no histórico deste canal.'}</p>}{error&&<p role="alert">{error}</p>}{busy&&<p role="status">Consultando…</p>}{more&&<button disabled={busy} onClick={()=>void load(mode,items.at(-1)?.id)}>Mais resultados</button>}
     </section>}
   </div>;

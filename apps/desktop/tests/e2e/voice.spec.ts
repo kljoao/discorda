@@ -21,6 +21,12 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await page.evaluate(()=>(window as any).addFixtureStreams());
   await page.getByRole('button',{name:'Mosaico de transmissões'}).click();
   await expect(page.locator('.voice-grid video')).toHaveCount(2);
+  await page.getByRole('button',{name:'Silenciar transmissão',exact:true}).first().click();
+  await expect(page.getByRole('button',{name:'Ouvir transmissão',exact:true})).toHaveCount(1);
+  const saved=await page.evaluate(()=>Object.entries(localStorage).find(([key])=>key.includes('member-volumes'))?.[1]);
+  expect(Object.values(JSON.parse(saved!)).some((v:any)=>v.voice===150&&v.screen===100&&v.screenMuted===true)).toBe(true);
+  await page.getByRole('button',{name:'Ouvir transmissão',exact:true}).click();
+
   await page.getByRole('button',{name:'Modo cinema',exact:true}).click();
   await expect(page.locator('.cinema-mode')).toBeVisible();
   await page.screenshot({path:'test-results/cinema-multistream.png',fullPage:true});
@@ -37,6 +43,7 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await page.getByRole('button',{name:'screen:1',exact:true}).click();
   const snapshot=()=>page.evaluate(()=>(window as unknown as {voiceSnapshot:()=>{joins:number;starts:number;stops:number;old:string;current:string;audio:number}}).voiceSnapshot());
   await expect(page.getByRole('button',{name:'Parar tela',exact:true})).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('data-stream-privacy','true');
   await page.getByRole('button',{name:'Parar tela',exact:true}).click({button:'right'});
   await page.getByRole('button',{name:'Ativar som do PC',exact:true}).click();
   await expect.poll(async()=>(await snapshot()).audio).toBe(1);
@@ -56,6 +63,7 @@ test('voice channel opens avatars and screen replacement preserves publication a
   expect(await snapshot()).toMatchObject({starts:1,stops:0,current:'live'});
   await page.getByRole('button',{name:'Parar tela',exact:true}).click();
   await expect.poll(async()=>(await snapshot()).stops).toBe(1);
+  await expect(page.locator('html')).toHaveAttribute('data-stream-privacy','false');
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'suspend'})));
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'resume'})));
   await expect.poll(async()=>(await snapshot()).joins).toBe(2);
@@ -65,5 +73,6 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'resume'})));
   await expect(page.getByRole('button',{name:'Sair da chamada'})).toHaveCount(0);
   expect((await snapshot()).joins).toBe(2);
+  expect(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.includes('last-call:')).length)).toBe(0);
  }finally{await browser.close();await server.close();}
 });

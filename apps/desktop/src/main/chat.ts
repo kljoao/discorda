@@ -1,6 +1,7 @@
 import type { ChatAction, ChatResult } from '../shared/ipc/contracts';
 import type { AuthController } from './auth/auth-controller';
 import { shell } from 'electron';
+import {stagedAttachmentAction} from './attachment-transfer';
 import {attachmentAction} from './attachments';
 
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
@@ -15,6 +16,11 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
     if (['http:', 'https:'].includes(url.protocol) && !url.username && !url.password) return;
     throw new Error('Invalid link');
   }
+  if(a.kind==='attachmentStage'&&text(a.name,180)&&a.bytes instanceof Uint8Array&&a.bytes.byteLength>0&&a.bytes.byteLength<=8*1024*1024)return;
+  if(['attachmentProgress','attachmentCancel'].includes(String(a.kind))&&typeof a.token==='string'&&guid.test(a.token))return;
+  if(a.kind==='inbox'&&(a.before===undefined||numberId(a.before))&&(a.unread===undefined||typeof a.unread==='boolean'))return;
+  if(a.kind==='inboxRead'&&numberId(a.id))return;
+  if(a.kind==='catchUp'&&(a.since===undefined||(typeof a.since==='string'&&a.since.length<=30&&Number.isFinite(Date.parse(a.since)))))return;
   if(a.kind==='reads'||a.kind==='manageMembers')return;
   if(a.kind==='audit'&&(a.before===undefined||numberId(a.before)))return;
   if(a.kind==='role'&&typeof a.userId==='string'&&guid.test(a.userId)&&['Admin','Moderator','Member'].includes(String(a.role)))return;
@@ -25,12 +31,14 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
   if (a.kind === 'temporaryRoom' && text(a.name,40)) return;
   if (a.kind === 'channel' && text(a.name, 80)) return;
   if (typeof a.channelId !== 'string' || !guid.test(a.channelId)) throw new Error('Invalid channel');
+  if(a.kind==='attachmentTransfer'&&typeof a.clientId==='string'&&guid.test(a.clientId)&&typeof a.token==='string'&&guid.test(a.token))return;
+  if(a.kind==='threadFollow'&&numberId(a.id)&&(a.enabled===undefined||typeof a.enabled==='boolean'))return;
   if(a.kind==='attachmentUpload'&&typeof a.clientId==='string'&&guid.test(a.clientId))return;
   if(a.kind==='attachmentGet'&&typeof a.id==='string'&&guid.test(a.id)&&(a.preview===undefined||typeof a.preview==='boolean'))return;
-  if(a.kind==='message'&&numberId(a.id))return;
+  if((a.kind==='message'||a.kind==='context')&&numberId(a.id))return;
   if(a.kind==='read'&&numberId(a.id))return;
   if(a.kind==='pins'&&(a.before===undefined||numberId(a.before)))return;
-  if(a.kind==='search'&&text(a.query,120)&&(a.before===undefined||numberId(a.before)))return;
+  if(a.kind==='search'&&typeof a.query==='string'&&a.query.length<=120&&!/[\u0000-\u001f]/.test(a.query)&&(a.query.trim()||a.author||a.after||a.until||a.fileType)&&(a.author===undefined||(typeof a.author==='string'&&guid.test(a.author)))&&[a.after,a.until].every(d=>d===undefined||(typeof d==='string'&&/^\d{4}-\d{2}-\d{2}$/.test(d)))&&(a.fileType===undefined||['any','image','video','audio','document'].includes(String(a.fileType)))&&(a.before===undefined||numberId(a.before)))return;
   if(a.kind==='annotations'&&Array.isArray(a.ids)&&a.ids.length>0&&a.ids.length<=100&&a.ids.every(numberId))return;
   if(a.kind==='pin'&&numberId(a.id)&&typeof a.enabled==='boolean')return;
   if(a.kind==='reaction'&&numberId(a.id)&&typeof a.enabled==='boolean'&&['👍','❤️','😂','🎉','👀','🔥'].includes(String(a.emoji)))return;
@@ -42,6 +50,11 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
 export async function chatAction(auth: AuthController, value: unknown): Promise<ChatResult> {
   validateChatAction(value);
   const action = value;
+  if(action.kind==='attachmentStage'||action.kind==='attachmentTransfer'||action.kind==='attachmentProgress'||action.kind==='attachmentCancel')return stagedAttachmentAction(auth,action);
+  if(action.kind==='catchUp')return auth.chatRequest('/catch-up'+(action.since?'?since='+encodeURIComponent(action.since):''));
+  if(action.kind==='inbox')return auth.chatRequest('/inbox?'+new URLSearchParams({...action.before?{before:action.before}:{},...action.unread?{unread:'true'}:{}}));
+  if(action.kind==='inboxRead')return auth.chatRequest('/inbox/'+action.id+'/read','PUT');
+  if(action.kind==='threadFollow')return auth.chatRequest('/channels/'+action.channelId+'/threads/'+action.id+'/follow',action.enabled===undefined?'GET':'PUT',action.enabled===undefined?undefined:{enabled:action.enabled});
   if(action.kind==='attachmentUpload'||action.kind==='attachmentGet')return attachmentAction(auth,action);
   if(action.kind==='temporaryRoom')return auth.chatRequest('/temporary-rooms','POST',{name:action.name});
   if (action.kind === 'openLink') { await shell.openExternal(action.url); return { ok: true, data: null }; }
@@ -57,9 +70,10 @@ export async function chatAction(auth: AuthController, value: unknown): Promise<
   if(action.kind==='role')return auth.chatRequest('/management/members/'+action.userId+'/role','PUT',{role:action.role});
   if(action.kind==='moderateVoice')return auth.chatRequest('/management/members/'+action.userId+'/voice','POST',{channelId:action.channelId??null});
   if(action.kind==='read')return auth.chatRequest('/channels/'+action.channelId+'/read','PUT',{messageId:action.id});
-  if(action.kind==='search'||action.kind==='pins')return auth.chatRequest('/channels/'+action.channelId+'/'+action.kind+'?'+new URLSearchParams({...('query' in action?{q:action.query}:{}),...(action.before?{before:action.before}:{})}));
+  if(action.kind==='search'||action.kind==='pins')return auth.chatRequest('/channels/'+action.channelId+'/'+action.kind+'?'+new URLSearchParams({...('query' in action?{q:action.query,...action.author?{author:action.author}:{},...action.after?{after:action.after}:{},...action.until?{until:action.until}:{},...action.fileType?{fileType:action.fileType}:{}}:{}),...(action.before?{before:action.before}:{})}));
   if(action.kind==='annotations')return auth.chatRequest('/channels/'+action.channelId+'/annotations?ids='+action.ids.join(','));
   const route = `/channels/${action.channelId}/messages`;
+  if(action.kind==='context')return auth.chatRequest(route+'/'+action.id+'/context');
   if(action.kind==='message')return auth.chatRequest(route+'/'+action.id);
   if(action.kind==='reaction'||action.kind==='pin')return auth.chatRequest(route+'/'+action.id+'/'+action.kind,'PUT',{enabled:action.enabled,...(action.kind==='reaction'?{emoji:action.emoji}:{})});
   if (action.kind === 'history') return auth.chatRequest(route + '?' + new URLSearchParams({...action.before?{before:action.before}:{},...action.thread?{thread:action.thread}:{}}));

@@ -21,3 +21,8 @@ describe('screen quality',()=>{
 it('offers receiver layers only in automatic mode while keeping a 1080p60 top layer',()=>{
  const {capture,publish}=screenOptions('auto',60);expect(capture.resolution).toMatchObject({width:1920,height:1080,frameRate:60});expect(publish.simulcast).toBe(true);expect(publish.screenShareSimulcastLayers).toHaveLength(2);expect(publish.degradationPreference).toBe('balanced');
 });
+
+it('keeps text sharp and movies smooth without enabling capture audio',()=>{
+ expect(screenOptions('1440',30,'text').publish.degradationPreference).toBe('maintain-resolution');
+ const movies=screenOptions('auto',30,'movies');expect(movies.capture.contentHint).toBe('motion');expect(movies.publish.degradationPreference).toBe('maintain-framerate');expect(movies.capture.audio).toBe(false);
+});

@@ -111,3 +111,18 @@ Backup guarda somente o schema `discorda`, é privado e não é criptografado. C
 Para atualizar, faça backup, pare **somente** API/LiveKit com `bash tools/vps.sh stop`, execute `git pull --ff-only` e `bash tools/vps.sh start`. Não execute `down -v`: isso apaga dados. Uma atualização do desktop não atualiza o servidor. Para voltar ao servidor anterior após novas escritas, planeje a transferência dos dados; não faça duas cópias divergentes do grupo.
 
 O Compose e os testes locais não comprovam DNS, certificados, firewall ou desempenho da sua VPS. A implantação só está concluída após validar os serviços naquele ambiente.
+## Atualização assistida
+
+Depois de instalar a versão que contém o assistente, execute na pasta do repositório:
+
+```bash
+bash tools/vps.sh update
+```
+
+Requer `git`, `curl`, `python3`, `flock` (util-linux no Ubuntu) e Docker Compose. Busca a última release estável do repositório GitHub configurado como `origin`; recusa alterações locais, atualizações simultâneas e commits que não avancem o checkout atual. Faz backup antes de parar chamadas, avança o código, inicia os serviços com migrações e verifica a versão exata da API e a prontidão do banco por até 90 segundos. O Caddy e outros projetos Docker não são alterados.
+
+Na primeira adoção, obtenha os scripts com `git pull --ff-only`. Para reaplicar o código já presente e verificar os serviços, use `bash tools/vps.sh start` e `bash tools/vps.sh verify`. Se o código já corresponder à release mas a verificação falhar, esses dois comandos também recompõem os containers.
+
+No aplicativo, o painel **Operação do servidor → Atualizar o servidor** exibe versões, protocolo, etapas e verificação de API/banco. O comando é executado por você via SSH; a API não tem acesso ao socket do Docker nem executa comandos remotos.
+
+Uma falha interrompe o procedimento e exige consultar `bash tools/vps.sh logs`. Não há restauração automática do banco, pois migrações e novas mensagens podem tornar uma reversão insegura. O caminho do backup é informado antes da parada. A verificação confirma API, banco e versão; teste também uma chamada e o caminho HTTPS público após atualizar.

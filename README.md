@@ -97,6 +97,8 @@ A qualidade depende de upload do host, conexão dos amigos, GPU e decodificaçã
 
 ## Operar, atualizar e fazer backup
 
+Veja [qualidade por espectador, caixa de entrada e anexos](docs/quality-inbox-files.md) para os novos controles, limites de arquivos e migrações necessárias. A atualização assistida da VPS está no [guia de hospedagem](docs/vps.md#atualização-assistida).
+
 Consulte também [diagnóstico de chamadas e entrega segura de versões](docs/call-reliability.md) para o teste guiado, reconexão, indicadores de qualidade, painel de saúde e compatibilidade entre cliente e servidor.
 
 Veja [operação e recuperação](docs/selfhosting-operations.md): comandos para logs, backup, restore, renovação de certificado, troca de secrets, recuperação de administrador e migração do piloto antigo.
@@ -173,3 +175,7 @@ Esta versão requer atualizar o backend e aplicar a migração `CommunityFeature
 - **Backup automático:** no painel local, “Backup diário” cria uma tarefa Windows às 03:00 para a conta atual. Requer sessão Windows e Docker ativos; executa quando possível após um horário perdido. A cada sete dias também restaura o backup em PostgreSQL descartável, sem rede e sem volumes do servidor. “Testar restauração” permite antecipar a verificação. Backups são privados, não criptografados e sem limpeza automática: monitore espaço e mantenha cópia criptografada externa. Não restaure arquivos de terceiros. “Desativar agenda” preserva os backups.
 
 Veja [validação, desempenho e limites da versão](docs/community-quality.md) para os comandos de teste e critérios de homologação em PCs reais.
+
+Veja também [compartilhamento, retomada de contexto, convites e políticas de armazenamento](docs/sharing-and-administration.md).
+
+Guia de uso: [janela flutuante, áudio, novidades e busca](docs/viewing-audio-and-discovery.md).

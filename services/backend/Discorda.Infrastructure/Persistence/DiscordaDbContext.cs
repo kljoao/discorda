@@ -7,6 +7,11 @@ namespace Discorda.Infrastructure.Persistence;
 
 public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> options) : DbContext(options)
 {
+    public DbSet<ServerInvite> ServerInvites => Set<ServerInvite>();
+    public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
+    public DbSet<StoragePolicy> StoragePolicies => Set<StoragePolicy>();
+    public DbSet<InboxEntry> InboxEntries => Set<InboxEntry>();
+    public DbSet<ThreadFollow> ThreadFollows => Set<ThreadFollow>();
     public DbSet<User> Users => Set<User>();
     public DbSet<AllowedUser> AllowedUsers => Set<AllowedUser>();
     public DbSet<ApplicationSession> ApplicationSessions => Set<ApplicationSession>();
@@ -24,6 +29,28 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        model.Entity<StoragePolicy>(e => { e.ToTable("storage_policy", "discorda"); e.HasKey(x => x.Id); });
+        model.Entity<ServerInvite>(e => {
+            e.ToTable("server_invites", "discorda"); e.HasKey(x => x.Id); e.Property(x => x.TokenHash).HasMaxLength(64); e.HasIndex(x => x.TokenHash).IsUnique();
+        });
+        model.Entity<JoinRequest>(e => {
+            e.ToTable("join_requests", "discorda"); e.HasKey(x => x.Id); e.Property(x => x.Email).HasMaxLength(320); e.Property(x => x.Name).HasMaxLength(100); e.Property(x => x.Issuer).HasMaxLength(256); e.Property(x => x.Status).HasMaxLength(12);
+            e.HasIndex(x => new { x.InviteId, x.Subject }).IsUnique(); e.HasIndex(x => new { x.Status, x.CreatedAt });
+            e.HasOne<ServerInvite>().WithMany().HasForeignKey(x => x.InviteId).OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<InboxEntry>(e => {
+            e.ToTable("inbox_entries", "discorda"); e.HasKey(x => new { x.UserId, x.MessageId });
+            e.Property(x => x.Kind).HasMaxLength(12);
+            e.HasIndex(x => new { x.UserId, x.Read, x.MessageId });
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Message>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<ThreadFollow>(e => {
+            e.ToTable("thread_follows", "discorda"); e.HasKey(x => new { x.UserId, x.MessageId });
+            e.HasIndex(x => x.MessageId);
+            e.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<Message>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+        });
         model.Entity<MessageAttachment>(b => {
             b.ToTable("message_attachments", "discorda"); b.HasKey(x => x.Id);
             b.Property(x => x.Name).HasMaxLength(180);

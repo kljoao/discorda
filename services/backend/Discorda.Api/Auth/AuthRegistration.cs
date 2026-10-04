@@ -56,6 +56,7 @@ public static class AuthRegistration
         services.AddScoped<IAuthorizationHandler, MemberHandler>();
         services.AddAuthorization(options =>
         {
+            options.AddPolicy("VerifiedGoogle", policy => policy.RequireAuthenticatedUser());
             options.AddPolicy("Member", policy => policy.RequireAuthenticatedUser().AddRequirements(new MemberRequirement()));
             options.FallbackPolicy = options.GetPolicy("Member");
         });

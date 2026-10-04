@@ -28,8 +28,9 @@ const development = !app.isPackaged && process.env.DISCORDA_DEV_SERVER_URL === D
 const configuredApi = process.env.DISCORDA_API_URL ?? lan?.apiUrl ?? (!app.isPackaged ? 'http://127.0.0.1:5080' : undefined);
 const apiOrigin = configuredApi ? validateApiUrl(configuredApi, app.isPackaged) : undefined;
 let window: BrowserWindow | null = null;
+let streamViewer:BrowserWindow|undefined;
 let pendingInvite:string|undefined;
-function receiveInvite(value:string){try{pendingInvite=inviteAddress(value);window?.webContents.send(IPC.inviteEvent);}catch{/* External input never starts a connection. */}}
+function receiveInvite(value:string){try{inviteAddress(value);pendingInvite=value;window?.webContents.send(IPC.inviteEvent);}catch{/* External input never starts a connection. */}}
 for(const argument of process.argv)if(argument.startsWith('discorda:'))receiveInvite(argument);
 app.on('open-url',(event,url)=>{event.preventDefault();receiveInvite(url);});
 if(app.isPackaged)app.setAsDefaultProtocolClient('discorda');
@@ -48,7 +49,9 @@ else {
       const notification=new Notification({title:'Discorda',body:'Nova mensagem no seu grupo.',silent:true});notification.on('click',()=>{window?.restore();window?.show();window?.focus();});notification.show();
     });
     const auth = new AuthController(apiOrigin, new SessionVault(path.join(app.getPath('userData'), 'auth-session.enc')));
-    ipcMain.handle(IPC.admin,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');return adminAction(auth,args[0],window!);});
+    try{const invitation=JSON.parse(await readFile(path.join(app.getPath('userData'),'join-invite.json'),'utf8'));if(invitation.origin===apiOrigin&&typeof invitation.token==='string'&&/^[0-9a-f]{64}$/.test(invitation.token))auth.setInvite(invitation.token);}catch{}
+    ipcMain.handle(IPC.streamWindow,(event,...args:unknown[])=>{assertSender(event,[]);const a=args[0] as {pinned?:unknown;compact?:unknown}|null;if(args.length!==1||!a||typeof a!=='object'||Object.keys(a).some(k=>!['pinned','compact'].includes(k))||(a.pinned!==undefined&&typeof a.pinned!=='boolean')||(a.compact!==undefined&&typeof a.compact!=='boolean'))throw Error('Invalid viewer action');if(!media.callActive||!streamViewer||streamViewer.isDestroyed())throw Error('Viewer unavailable');if(typeof a.pinned==='boolean')streamViewer.setAlwaysOnTop(a.pinned);if(typeof a.compact==='boolean'){streamViewer.setMinimumSize(360,240);streamViewer.setSize(a.compact?480:1000,a.compact?320:650);}});
+      ipcMain.handle(IPC.admin,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');return adminAction(auth,args[0],window!,apiOrigin);});
     const shortcuts=new Shortcuts(value=>{if(window&&!window.isDestroyed())window.webContents.send(IPC.shortcutEvent,value);});
     ipcMain.handle(IPC.shortcuts,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');shortcuts.configure(args[0]);});
     app.on('before-quit',()=>shortcuts.stop());
@@ -126,6 +129,8 @@ else {
         await live.stop();await media.stop();await auth.signOut();
         await mkdir(app.getPath('userData'),{recursive:true});
         await library.remember(config);await writeFile(path.join(app.getPath('userData'),'server.json'),JSON.stringify(config),{mode:0o600});
+        const token=typeof args[0]==='string'&&args[0].startsWith('discorda:')?new URL(args[0]).searchParams.get('token'):null;
+        await writeFile(path.join(app.getPath('userData'),'join-invite.json'),JSON.stringify({origin:config.apiUrl,token}),{mode:0o600});
         app.relaunch();app.quit();return {ok:true};
       }catch{return {ok:false,message:'Não foi possível salvar a conexão. Tente novamente.'};}
       finally{connectingServer=false;}
@@ -223,6 +228,7 @@ else {
         return {action:'allow',overrideBrowserWindowOptions:{title:'Transmissão · Discorda',autoHideMenuBar:true,width:1000,height:650,webPreferences:{preload:'',contextIsolation:true,nodeIntegration:false,sandbox:true,webSecurity:true}}};
       });
       window.webContents.on('did-create-window',child=>{
+        streamViewer?.close();streamViewer=child;child.on('closed',()=>{if(streamViewer===child)streamViewer=undefined;});
         child.webContents.setWindowOpenHandler(()=>({action:'deny'}));
         child.webContents.on('will-navigate',event=>event.preventDefault());
         child.webContents.on('will-attach-webview',event=>event.preventDefault());

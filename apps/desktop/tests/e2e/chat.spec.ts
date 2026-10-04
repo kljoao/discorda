@@ -2,7 +2,7 @@ import { chromium, expect, test } from '@playwright/test';
 import { createServer } from 'vite';
 
 test('chat preserves retry identity, edits, replies, deletion and channel creation', async () => {
-  test.setTimeout(60000);
+  test.setTimeout(90000);
   const server = await createServer({ cacheDir:"node_modules/.vite-e2e-chat", optimizeDeps:{entries:["index.html"]}, server: { port: 5183, strictPort: true } });
   await server.listen();
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
@@ -14,8 +14,8 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       const channels = [{id: '225a47d7-779e-4992-89d2-03b1517f9112', name: 'geral'}];
       const messages: import('../../src/shared/ipc/contracts').ChatMessage[] = [];
       window.addEventListener('test-seed',()=>{messages.length=0;for(let i=1;i<=1100;i++){const message={id:String(i),authorId:'other-user',authorName:'Histórico',channelId:channels[0].id,clientId:'seed-'+i,body:'Mensagem '+i,replyToId:null,createdAt:new Date().toISOString(),editedAt:null,deletedAt:null,version:1};messages.push(message);listeners.forEach(listener=>listener({kind:'message',data:message}));}});
-      let dropResponse = true;
-      let memberFailure = true;
+      let dropResponse = true;let following=false;let inboxRead=false;let staged: {name:string;size:number}|undefined;
+      let memberFailure = true;let inviteCreated=false;let inviteRevoked=false;
       const reactions=new Map<string,{id:string;emoji:string;count:number;mine:boolean}>();const pins=new Set<string>();
       const allowedUsers=[{email:'admin@example.test',enabled:true}];
       const listeners = new Set<(event: import('../../src/shared/ipc/contracts').LiveEvent) => void>();
@@ -23,7 +23,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       window.discorda = {onPowerState:()=>()=>{},
         servers:async action=>({servers:[{id:'a'.repeat(64),name:'Grupo de teste',address:'https://grupo.example.test',current:true}],...(action.kind==='invite'?{invite:'discorda://join?server=https%3A%2F%2Fgrupo.example.test'}:{})}),onInvite:()=>()=>{},
         shortcuts:async()=>{},onShortcut:()=>()=>{},
-        admin:async action=>{if(action.kind==='setup')return {ok:true,data:null};if(action.kind==='operations')return {ok:true,data:{checkedAt:new Date().toISOString(),api:'online',database:'ready',media:'online',activeCalls:0,process:{memoryBytes:1024,cpuAveragePercent:1,uptimeSeconds:60},storage:{databaseBytes:1024,freeBytes:2048,totalBytes:4096},backup:null}};if(action.kind==='settings')return {ok:true,data:{adminEmail:'admin@example.test'}};if(action.kind==='users')return {ok:true,data:allowedUsers};if(action.kind==='network')return {ok:true,data:[]};if(action.kind==='user'){allowedUsers.push({email:action.email,enabled:action.enabled});return {ok:true,data:null};}return {ok:true,data:null};},notifyMessage:async()=>{},
+        admin:async action=>{if(action.kind==='inviteCreate'){inviteCreated=true;return {ok:true,data:{link:'discorda://join?server=https%3A%2F%2Fgrupo.example.test&token='+'a'.repeat(64)}};}if(action.kind==='inviteRevoke'){inviteRevoked=true;return {ok:true,data:null};}if(action.kind==='invites')return {ok:true,data:inviteCreated?[{id:'invite-test',expiresAt:new Date(Date.now()+86400000).toISOString(),maxUses:5,uses:0,revoked:inviteRevoked}]:[]};if(action.kind==='joinRequests')return {ok:true,data:[]};if(action.kind==='storagePolicy')return {ok:true,data:{quotaMiB:512,retentionDays:0,version:1}};if(action.kind==='setup')return {ok:true,data:null};if(action.kind==='operations')return {ok:true,data:{checkedAt:new Date().toISOString(),api:'online',database:'ready',media:'online',activeCalls:0,process:{memoryBytes:1024,cpuAveragePercent:1,uptimeSeconds:60},storage:{databaseBytes:1024,freeBytes:2048,totalBytes:4096},backup:null}};if(action.kind==='settings')return {ok:true,data:{adminEmail:'admin@example.test'}};if(action.kind==='users')return {ok:true,data:allowedUsers};if(action.kind==='network')return {ok:true,data:[]};if(action.kind==='user'){allowedUsers.push({email:action.email,enabled:action.enabled});return {ok:true,data:null};}return {ok:true,data:null};},notifyMessage:async()=>{},
         reconnectLive:async()=>{},diagnostics:async()=>({version:'test',platform:'win32',checkedAt:'',api:'online',database:'ready',chat:'connected',attempts:1,callActive:false,update:'idle'}),
         updates:async()=>({status:'ready',version:'9.0.0'}),importServer:async()=>false,connectServer:async()=>({ok:false}),voiceActivity:async()=>{},audioStatus:async()=>({supported:true,os:"test"}), devicePermissions: async()=>{}, audioApplications:async()=>[], applicationAudio:async()=>{}, onApplicationAudio:()=>()=>{}, onApplicationAudioEnd:()=>()=>{},
         microphoneTest: async () => {},
@@ -35,11 +35,21 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
         signIn: async () => ({status: 'signed-out'}), signOut: async () => ({status: 'signed-out'}), cancelSignIn: async () => {},
         chat: async (action) => {
           if(action.kind==='manageMembers')return {ok:true,data:[{id:'test-user',displayName:'Meu apelido',role:'Owner'},{id:'past-member',displayName:'Amigo offline',role:'Member'}]};if(action.kind==='audit')return {ok:true,data:[]};
+          if(action.kind==='threadFollow'){if(action.enabled!==undefined)following=action.enabled;return {ok:true,data:{enabled:following}};}
+          if(action.kind==='context')return {ok:true,data:{items:messages.filter(m=>m.channelId===action.channelId&&!m.threadRootId).slice(-50),hasMore:false}};
+          if(action.kind==='message')return {ok:true,data:messages.find(m=>m.id===action.id)};
+          if(action.kind==='inboxRead'){inboxRead=true;return {ok:true,data:null};}
+          if(action.kind==='inbox'){const message=messages.find(m=>m.threadRootId);return {ok:true,data:{items:message&&(!action.unread||!inboxRead)?[{...message,channelName:'geral',kind:'reply',read:inboxRead}]:[],hasMore:false}};}
+          if(action.kind==='attachmentStage'){staged={name:action.name,size:action.bytes.length};return {ok:true,data:{token:'file-token',...staged}};}
+          if(action.kind==='attachmentCancel'){staged=undefined;return {ok:true,data:null};}
+          if(action.kind==='attachmentProgress')return {ok:true,data:{progress:.5}};
+          if(action.kind==='attachmentTransfer'){const message={id:String(messages.length+1),authorId:'test-user',authorName:'Pessoa de teste',channelId:action.channelId,clientId:action.clientId,body:staged!.name,attachments:[{id:'file-id',name:staged!.name,size:staged!.size}],replyToId:null,createdAt:new Date().toISOString(),editedAt:null,deletedAt:null,version:1};messages.push(message);staged=undefined;return {ok:true,data:message};}
+          if(action.kind==='catchUp')return {ok:true,data:{since:new Date().toISOString(),channels:[],pins:[]}};
           if(action.kind==='reads')return {ok:true,data:{}};
           if(action.kind==='annotations')return {ok:true,data:{reactions:[...reactions.values()].filter(r=>action.ids.includes(r.id)),pins:[...pins].filter(id=>action.ids.includes(id))}};
           if(action.kind==='reaction'){const key=action.id+action.emoji;if(action.enabled)reactions.set(key,{id:action.id,emoji:action.emoji,count:1,mine:true});else reactions.delete(key);return {ok:true,data:null};}
           if(action.kind==='pin'){if(action.enabled)pins.add(action.id);else pins.delete(action.id);return {ok:true,data:null};}
-          if(action.kind==='search'||action.kind==='pins')return {ok:true,data:{items:messages.filter(m=>m.channelId===action.channelId&&!m.deletedAt&&(action.kind==='pins'?pins.has(m.id):m.body.includes(action.query))),hasMore:false}};
+          if(action.kind==='search'||action.kind==='pins')return {ok:true,data:{items:messages.filter(m=>m.channelId===action.channelId&&!m.deletedAt&&(action.kind==='pins'?pins.has(m.id):m.body.includes(action.query)&&(!action.fileType||!!m.attachments?.length)&&(!action.author||m.authorId===action.author))),hasMore:false}};
           if (action.kind === 'members' && memberFailure) {memberFailure=false;return {ok:false,message:'Temporariamente indisponível'};}
           if (action.kind === 'members') return {ok:true,data:[{id:'past-member',name:'Amigo offline',status:'offline',typingChannelId:null,avatarUrl:null}]};
           if(action.kind==='renameWorkspace'){workspaceName=action.name;return {ok:true,data:null};}
@@ -65,7 +75,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       };
     });
     await page.goto('http://127.0.0.1:5183');
-    await expect(page.getByRole('heading', {name: 'geral', exact: true})).toBeVisible();
+    await expect(page.getByRole('heading', {name: 'geral', exact: true})).toBeVisible({timeout:15000});
     await expect(page.getByRole('region',{name:'Canais de voz'}).getByText('Amigo na voz')).toBeVisible();
     await expect(page.getByRole('navigation',{name:'Servidores',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Grupo de teste · Servidor atual',exact:true})).toHaveAttribute('aria-current','page');
@@ -100,6 +110,10 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await administration.getByLabel('E-mail',{exact:true}).fill('friend@example.test');
     await administration.getByRole('button',{name:'Autorizar pessoa'}).click();
     await expect(administration.getByText('friend@example.test · Autorizado')).toBeVisible();
+    await administration.getByRole('button',{name:'Criar e copiar convite',exact:true}).click();
+    await expect(administration.getByLabel('Convite copiado · guarde o link')).toHaveValue(/token=[a-f0-9]{64}/);
+    await administration.getByRole('button',{name:'Revogar',exact:true}).click();
+    await expect(administration.getByText(/solicitações.*Revogado/)).toBeVisible();
     await page.screenshot({path:'test-results/admin.png',fullPage:true,animations:'disabled'});
     await administration.getByRole('button',{name:'Fechar',exact:true}).click();
     await page.getByRole('dialog',{name:'Gerenciar grupo'}).getByRole('button',{name:'Fechar',exact:true}).click();
@@ -249,8 +263,8 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.screenshot({path:'test-results/chat-compact.png',fullPage:true,animations:'disabled'});
     await page.getByRole('button',{name:'Servidores e convites',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Seus servidores'})).toBeVisible();
-    await page.getByRole('button',{name:'Copiar convite do servidor atual'}).click();
-    await expect(page.getByLabel('Convite copiado')).toHaveValue(/discorda:\/\/join/);
+    await page.getByRole('button',{name:'Copiar endereço de conexão'}).click();
+    await expect(page.getByLabel('Endereço copiado')).toHaveValue(/discorda:\/\/join/);
     await page.screenshot({path:'test-results/community-servers.png',fullPage:true});
     await page.keyboard.press('Escape');
     await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
@@ -321,6 +335,8 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     const topicRoot=page.locator('.chat-message').filter({hasText:'Olá @André tudo bem?'});
     await topicRoot.hover();await topicRoot.getByRole('button',{name:'Abrir tópico'}).click();
     const thread=page.getByRole('complementary',{name:'Tópico'});
+    await thread.getByRole('button',{name:'Seguir tópico',exact:true}).click();
+    await expect(thread.getByRole('button',{name:'Seguindo tópico · deixar de seguir'})).toHaveAttribute('aria-pressed','true');
     await thread.getByRole('textbox',{name:'Resposta no tópico'}).fill('Resposta organizada');
     await thread.getByRole('textbox',{name:'Resposta no tópico'}).press('Enter');
     await expect(thread.getByText('Resposta organizada',{exact:true})).toBeVisible();
@@ -328,6 +344,43 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(thread.getByRole('textbox',{name:'Resposta no tópico'})).toBeFocused();
     await page.screenshot({path:'test-results/thread-panel.png',fullPage:true});
     await thread.getByRole('button',{name:'Fechar tópico'}).click();
+    await page.getByRole('button',{name:'Desde sua última visita',exact:true}).click();
+    const overview=page.getByRole('dialog',{name:'Desde sua última visita'});
+    await expect(overview.getByText('Resposta organizada',{exact:true})).toBeVisible();
+    await page.screenshot({path:'test-results/catch-up.png',fullPage:true});
+    await overview.getByRole('button',{name:'Fechar novidades'}).click();
+    await page.getByRole('button',{name:'Caixa de entrada',exact:true}).click();
+    const inbox=page.getByRole('dialog',{name:'Caixa de entrada'});
+    await expect(inbox.getByText('Resposta organizada',{exact:true})).toBeVisible();
+    await page.screenshot({path:'test-results/inbox.png',fullPage:true});
+    await inbox.getByRole('button',{name:'Abrir mensagem'}).click();
+    await expect(thread.getByText('Resposta organizada',{exact:true})).toBeVisible();
+    await page.waitForTimeout(900); // Reading requires a visible, focused message.
+    await thread.getByRole('button',{name:'Fechar tópico'}).click();
+    await page.getByRole('button',{name:'Caixa de entrada',exact:true}).click();
+    await expect(inbox.getByText('Tudo em dia por aqui.')).toBeVisible();
+    await page.keyboard.press('Escape');
+    await page.locator('.conversation input[type=file]').setInputFiles({name:'review.txt',mimeType:'text/plain',buffer:Buffer.from('hello')});
+    await expect(page.getByRole('complementary',{name:'Revisar arquivo antes de enviar'})).toBeVisible();
+    await expect(page.locator('.message-list').getByText('review.txt',{exact:true})).toHaveCount(0);
+    await page.screenshot({path:'test-results/file-review.png',fullPage:true});
+    await page.getByRole('complementary',{name:'Revisar arquivo antes de enviar'}).getByRole('button',{name:'Cancelar'}).click();
+    await expect(page.getByRole('complementary',{name:'Revisar arquivo antes de enviar'})).toHaveCount(0);
+    await page.locator('.conversation input[type=file]').setInputFiles({name:'review.txt',mimeType:'text/plain',buffer:Buffer.from('hello')});
+    await page.getByRole('complementary',{name:'Revisar arquivo antes de enviar'}).getByRole('button',{name:'Enviar arquivo'}).click();
+    await expect(page.locator('.message-list').getByText('review.txt',{exact:true}).first()).toBeVisible();
+    await page.getByRole('button',{name:'Buscar mensagens',exact:true}).click();
+    await page.getByRole('searchbox',{name:'Termos da busca'}).fill('');
+    await page.getByRole('combobox',{name:'Tipo de arquivo'}).selectOption('any');
+    await page.getByRole('button',{name:'Buscar',exact:true}).click();
+    await expect(page.locator('.history-results').getByText('review.txt',{exact:true}).first()).toBeVisible();
+    expect(await page.locator('.history-popover').evaluate(el=>{const box=el.getBoundingClientRect(),parent=el.closest('.conversation')!.getBoundingClientRect();return box.left>=parent.left&&box.right<=parent.right;})).toBe(true);
+    await page.screenshot({path:'test-results/search-filters.png',fullPage:true});
+    await page.locator('.history-results').getByRole('button').filter({hasText:'Abrir no contexto'}).first().click();
+    await expect(page.locator('.message-list').getByText('review.txt',{exact:true}).first()).toBeVisible();
+    await page.getByRole('button',{name:'Voltar às mensagens recentes'}).click();
+
+
     await page.getByRole('button',{name:'Ajustar microfone',exact:true}).click();
     await page.getByRole('tab',{name:'Conexão e diagnóstico',exact:true}).click();
     await page.getByRole('button',{name:'Compartilhar diagnóstico',exact:true}).click();

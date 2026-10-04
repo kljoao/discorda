@@ -16,6 +16,24 @@ public static class CommunityAdmin
     {
         var group = app.MapGroup("/api/v1/admin").RequireAuthorization("Member");
         group.AddEndpointFilter(async (context, next) => AdminEndpoints.IsAdmin(context.HttpContext, app.Configuration) ? await next(context) : Results.Forbid());
+        group.MapGet("/attachments", async (long? before, DiscordaDbContext db, CancellationToken ct) => {
+            var items = await (from a in db.MessageAttachments.AsNoTracking() join m in db.Messages on a.MessageId equals m.Id
+                where !before.HasValue || m.Id < before orderby m.Id descending
+                select new { a.Id, messageId = m.Id.ToString(), a.Name, a.Size, m.CreatedAt }).Take(51).ToListAsync(ct);
+            return Results.Ok(new { items = items.Take(50), hasMore = items.Count > 50,
+                usedBytes = await db.MessageAttachments.SumAsync(a => (long)a.Size, ct), limitBytes = (long)(await StorageManagement.Policy(db, ct)).QuotaMiB * 1024 * 1024 });
+        });
+        group.MapDelete("/attachments/{id:guid}", async (Guid id, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) => {
+            await using var tx = await db.Database.BeginTransactionAsync(ct);
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891324)", ct);
+            var messageId = await db.MessageAttachments.Where(a => a.Id == id).Select(a => (long?)a.MessageId).SingleOrDefaultAsync(ct);
+            if (messageId is null) return Results.NoContent();
+            await db.MessageAttachments.Where(a => a.Id == id).ExecuteDeleteAsync(ct);
+            await db.Messages.Where(m => m.Id == messageId).ExecuteUpdateAsync(s => s.SetProperty(m => m.Body, "Arquivo removido pelo administrador.").SetProperty(m => m.Version, m => m.Version + 1), ct);
+            Permissions.Audit(db, ctx, "attachment.delete", id.ToString()); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
+            await live.Publish("message", await ChatEndpoints.Views(db, m => m.Id == messageId).SingleAsync(ct));
+            return Results.NoContent();
+        }).RequireRateLimiting("admin-writes");
         group.MapPut("/setup", async (Setup input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) => {
             if (!ValidName(input.Name) || input.TextChannels is null || input.VoiceChannels is null || input.TextChannels.Length > 10 || input.VoiceChannels.Length > 10 || input.TextChannels.Concat(input.VoiceChannels).Any(s => !ValidName(s))) return Results.BadRequest();
             await using var tx = await db.Database.BeginTransactionAsync(ct);
@@ -59,7 +77,7 @@ public static class CommunityAdmin
                 }
             }catch(Exception) when(!requestCt.IsCancellationRequested) { }
             return (object)new {checkedAt=DateTimeOffset.UtcNow,api="online",database=database?"ready":"unavailable",media=await mediaStatus?"online":"unavailable",activeCalls=media.Roster.Length,
-                versions=new {api=typeof(CommunityAdmin).Assembly.GetName().Version?.ToString(),runtime=Environment.Version.ToString(),database=databaseVersion,protocol=1},
+                versions=new {api=typeof(CommunityAdmin).Assembly.GetName().Version?.ToString(3),runtime=Environment.Version.ToString(),database=databaseVersion,protocol=1},
                 process=new {memoryBytes=process.WorkingSet64,cpuAveragePercent=Math.Round(process.TotalProcessorTime.TotalSeconds/uptime/Environment.ProcessorCount*100,1),uptimeSeconds=(long)uptime},storage=new {databaseBytes,freeBytes,totalBytes},backup};
         }, requestCt))).RequireRateLimiting("admin-writes");
     }

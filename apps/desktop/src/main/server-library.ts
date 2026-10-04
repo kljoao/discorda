@@ -8,12 +8,12 @@ export const serverId=(origin:string)=>createHash('sha256').update(origin).diges
 export function inviteAddress(value:unknown):string {
   if(typeof value!=='string'||value.length>1024)throw Error('Convite inválido.');
   const url=new URL(value);
-  if(url.protocol!=='discorda:'||url.hostname!=='join'||url.pathname&&url.pathname!=='/'||url.username||url.password||url.port||url.hash||[...url.searchParams.keys()].join(',')!=='server')throw Error('Convite inválido.');
+  if(url.protocol!=='discorda:'||url.hostname!=='join'||url.pathname&&url.pathname!=='/'||url.username||url.password||url.port||url.hash||!['server','server,token'].includes([...url.searchParams.keys()].join(','))||(url.searchParams.has('token')&&!/^[0-9a-f]{64}$/.test(url.searchParams.get('token')??'')))throw Error('Convite inválido.');
   return normalizeServerAddress(url.searchParams.get('server'));
 }
-export function inviteLink(origin:string):string {
+export function inviteLink(origin:string,token?:string):string {
   const url=new URL(origin);const address=url.hostname.startsWith('26.')?url.hostname:origin;
-  return 'discorda://join?'+new URLSearchParams({server:normalizeServerAddress(address)});
+  return 'discorda://join?'+new URLSearchParams({server:normalizeServerAddress(address),...token?{token}:{}});
 }
 type Entry={id:string;name:string;config:ServerConfig};
 export class ServerLibrary {

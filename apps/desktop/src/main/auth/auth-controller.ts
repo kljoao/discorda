@@ -6,6 +6,8 @@ import { SessionVault } from './session-vault';
 import { AuthError } from './auth-error';
 
 export class AuthController {
+  private inviteToken?:string;
+  setInvite(token:string){this.inviteToken=token;}
   private client?: SupabaseClient;
   private supabaseOrigin?: string;
   private creating?: Promise<SupabaseClient>;
@@ -93,6 +95,13 @@ export class AuthController {
     try { response = await fetch(`${this.apiOrigin}/api/v1/auth/me`, { headers: { Authorization: `Bearer ${token}` }, signal: AbortSignal.timeout(12_000), redirect: 'error' }); }
     catch { return { status: 'unavailable', message: 'Não foi possível verificar seu acesso. Tente novamente.' }; }
     if (epoch !== this.epoch) return { status: 'signed-out' };
+    if(response.status===403&&this.inviteToken){
+      try{const request=await fetch(`${this.apiOrigin}/api/v1/auth/join-request`,{method:'POST',headers:{Authorization:`Bearer ${token}`,'Content-Type':'application/json'},body:JSON.stringify({token:this.inviteToken}),redirect:'error',signal:AbortSignal.timeout(12000)});
+        if(epoch!==this.epoch)return {status:'signed-out'};
+        if(request.ok){const data=await request.json() as {status:string};client.auth.startAutoRefresh();return {status:'unavailable',message:data.status==='pending'?'Pedido enviado. Aguarde a aprovação do administrador e clique em atualizar.':data.status==='approved'?'Acesso aprovado. Clique em atualizar para entrar.':'O administrador recusou o pedido. Entre em contato com ele.'};}
+        return {status:'unavailable',message:'O convite expirou, foi revogado ou atingiu o limite. Peça um novo convite ao administrador.'};
+      }catch{return {status:'unavailable',message:'Não foi possível enviar o pedido de acesso. Tente novamente.'};}
+    }
     if (response.status === 401 || response.status === 403) {
       await client.auth.signOut({ scope: 'local' }).catch(() => undefined);
       await this.clearLocal();
@@ -115,15 +124,18 @@ export class AuthController {
     return data.session.access_token;
   }
 
-  async chatRequest(route: string, method = 'GET', body?: unknown, area:'chat'|'admin'='chat'): Promise<ChatResult> {
+  async chatRequest(route: string, method = 'GET', body?: unknown, area:'chat'|'admin'='chat', transfer?:{signal:AbortSignal;progress:(fraction:number)=>void}): Promise<ChatResult> {
     const epoch = this.epoch;
     if (this.loggingOut || this.login) return { ok: false, message: 'Entre novamente para acessar o grupo.' };
     try {
       const client = await this.getClient();
       const { data, error } = await client.auth.getSession();
       if (error || !data.session || epoch !== this.epoch) return { ok: false, message: 'Entre novamente para acessar o grupo.' };
-      const response = await fetch(`${this.apiOrigin}/api/v1/${area}${route}`, { method, body: body === undefined ? undefined : JSON.stringify(body),
-        headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(route.includes('/attachments')?60000:12000) });
+      const json=body===undefined?undefined:JSON.stringify(body);
+      const bytes=transfer&&json?Buffer.from(json):undefined;let offset=0;
+      const stream=bytes?new ReadableStream<Uint8Array>({pull(controller){if(transfer!.signal.aborted){controller.error(Error('Canceled'));return;}if(offset>=bytes.length){controller.close();return;}const end=Math.min(offset+65536,bytes.length);controller.enqueue(bytes.subarray(offset,end));offset=end;transfer!.progress(offset/bytes.length);}}):undefined;
+      const response = await fetch(`${this.apiOrigin}/api/v1/${area}${route}`, { method, body:stream??json,...stream?{duplex:'half' as const}:{},
+        headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' }, redirect: 'error', signal: transfer?AbortSignal.any([transfer.signal,AbortSignal.timeout(60000)]):AbortSignal.timeout(route.includes('/attachments')?60000:12000) });
       if (epoch !== this.epoch) return { ok: false, message: 'A sessão foi encerrada.' };
       if (response.status === 401 || response.status === 403) return { ok: false, status:response.status, message: 'Acesso não autorizado. Verifique sua sessão.' };
       if (response.status === 507) return {ok:false,status:507,message:'O servidor atingiu o limite de anexos. Peça ao administrador para liberar espaço.'};

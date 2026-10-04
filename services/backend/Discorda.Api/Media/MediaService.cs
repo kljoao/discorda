@@ -13,7 +13,7 @@ namespace Discorda.Api.Media;
 
 public sealed record MediaLease(Guid Id, Guid UserId, Guid SessionId, Guid ChannelId, DateTimeOffset Until);
 public sealed record MediaCommand(Guid ChannelId, Guid? LeaseId);
-public sealed record VoiceMember(Guid ChannelId, Guid UserId, string Name, Guid LeaseId);
+public sealed record VoiceMember(Guid ChannelId, Guid UserId, string Name, Guid LeaseId, bool ScreenSharing = false);
 public sealed class MediaAdmissionDeniedException : Exception;
 
 // A single-host admission registry. Restarting the API invalidates all existing leases.
@@ -140,7 +140,8 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
                 if (lease is not null && !checkedIds.Contains(lease.Id)) continue;
                 if (lease is not null && RoomName(lease.ChannelId) == name && lease.Until > DateTimeOffset.UtcNow && valid.Contains(lease.SessionId) && names.TryGetValue(lease.UserId, out var displayName))
                 {
-                    connected.Add(new(lease.ChannelId, lease.UserId, displayName, lease.Id));
+                    var sharing=participant.TryGetProperty("tracks",out var tracks)&&tracks.EnumerateArray().Any(t=>t.TryGetProperty("source",out var source)&&((source.ValueKind==JsonValueKind.Number&&source.TryGetInt32(out var n)&&n==3)||(source.ValueKind==JsonValueKind.String&&(source.GetString()=="SCREEN_SHARE"||source.GetString()=="screen_share")))&&(!t.TryGetProperty("muted",out var muted)||muted.ValueKind!=JsonValueKind.True));
+                    connected.Add(new(lease.ChannelId, lease.UserId, displayName, lease.Id,sharing));
                     if (!participant.TryGetProperty("name", out var currentName) || currentName.GetString() != displayName)
                         await Rpc("UpdateParticipant", new { room = name, identity, name = displayName }, new { room = name, roomAdmin = true }, ct);
                     continue;

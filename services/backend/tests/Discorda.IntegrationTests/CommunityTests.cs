@@ -16,6 +16,156 @@ namespace Discorda.IntegrationTests;
 public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixture>
 {
     [Fact]
+    public async Task FilteredSearchHonorsAuthorDatesFilesAndArchivedChannels()
+    {
+        await using var app=fixture.App();var person=await Member(app);using var client=person.Client;
+        var name=Guid.NewGuid().ToString("N")+".pdf";
+        var upload=await client.PostAsJsonAsync(Tools+"/attachments",new{clientId=Guid.NewGuid(),name,content="aGVsbG8="});upload.EnsureSuccessStatusCode();
+        var message=(await upload.Content.ReadFromJsonAsync<MessageView>())!;
+        var context=await client.GetFromJsonAsync<JsonElement>(Messages+"/"+message.Id+"/context");
+        Assert.Contains(context.GetProperty("items").EnumerateArray(),m=>m.GetProperty("id").GetString()==message.Id);
+        Assert.Equal(HttpStatusCode.NotFound,(await client.GetAsync($"/api/v1/chat/channels/{Guid.NewGuid()}/messages/{message.Id}/context")).StatusCode);
+        var today=DateTimeOffset.UtcNow.ToString("yyyy-MM-dd");
+        var search=Tools+$"/search?q={name}&author={person.Id}&after={today}&until={today}&fileType=document";
+        var result=await client.GetFromJsonAsync<JsonElement>(search);Assert.Single(result.GetProperty("items").EnumerateArray());Assert.Equal(message.Id,result.GetProperty("items")[0].GetProperty("id").GetString());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>(Tools+$"/search?q={name}&author={Guid.NewGuid()}")).GetProperty("items").EnumerateArray());
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>(Tools+$"/search?q={name}&fileType=image")).GetProperty("items").EnumerateArray());
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.GetAsync(Tools+"/search?fileType=executable")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.GetAsync(Tools+"/search?after=2026-02-31")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,(await client.GetAsync(Tools+"/search?after=2026-02-02&until=2026-02-01")).StatusCode);
+        Assert.Equal(HttpStatusCode.NotFound,(await client.GetAsync($"/api/v1/chat/channels/{Guid.NewGuid()}/search?fileType=any")).StatusCode);
+        (await client.DeleteAsync(Messages+"/"+message.Id+"?version=1")).EnsureSuccessStatusCode();
+        Assert.Empty((await client.GetFromJsonAsync<JsonElement>(search)).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task OverviewDoesNotConsumeInboxOrChannelReads()
+    {
+        await using var app=fixture.App();var a=await Member(app);var b=await Member(app);
+        using var sender=a.Client;using var reader=b.Client;
+        (await sender.PostAsJsonAsync(Messages,new{clientId=Guid.NewGuid(),body=$"Volte <@{b.Id}>"})).EnsureSuccessStatusCode();
+        var before=await reader.GetFromJsonAsync<Dictionary<string,string>>("/api/v1/chat/reads");
+        var summary=await reader.GetFromJsonAsync<JsonElement>("/api/v1/chat/catch-up");
+        Assert.Contains(summary.GetProperty("channels").EnumerateArray(),c=>c.GetProperty("id").GetGuid()==Channel);
+        var after=await reader.GetFromJsonAsync<Dictionary<string,string>>("/api/v1/chat/reads");
+        Assert.Equal(before!.OrderBy(p=>p.Key),after!.OrderBy(p=>p.Key));
+        Assert.NotEmpty((await reader.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox?unread=true")).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task InvitationsReserveOneUseAndRequireOwnerApprovalBeforeMembership()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        var owner=await Member(app,email);using var admin=owner.Client;var member=await Member(app);using var ordinary=member.Client;
+        Assert.Equal(HttpStatusCode.Forbidden,(await ordinary.PostAsJsonAsync("/api/v1/admin/invites",new{hours=24,maxUses=1})).StatusCode);
+        var created=await admin.PostAsJsonAsync("/api/v1/admin/invites",new{hours=24,maxUses=1});created.EnsureSuccessStatusCode();
+        var invite=await created.Content.ReadFromJsonAsync<JsonElement>();var token=invite.GetProperty("token").GetString();
+        using var outsider=app.CreateClient();var outsiderEmail=Guid.NewGuid()+"@example.test";
+        outsider.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",fixture.Token(Guid.NewGuid(),Guid.NewGuid(),outsiderEmail));
+        Assert.Equal(HttpStatusCode.Forbidden,(await outsider.GetAsync("/api/v1/chat/workspace")).StatusCode);
+        for(var i=0;i<2;i++){var result=await outsider.PostAsJsonAsync("/api/v1/auth/join-request",new{token});result.EnsureSuccessStatusCode();Assert.Equal("pending",(await result.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("status").GetString());}
+        using var second=app.CreateClient();second.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",fixture.Token(Guid.NewGuid(),Guid.NewGuid(),Guid.NewGuid()+"@example.test"));
+        Assert.Equal(HttpStatusCode.Conflict,(await second.PostAsJsonAsync("/api/v1/auth/join-request",new{token})).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden,(await outsider.GetAsync(Messages)).StatusCode);
+        var pending=await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/join-requests");var request=pending.EnumerateArray().Single(r=>r.GetProperty("email").GetString()==outsiderEmail).GetProperty("id").GetGuid();
+        Assert.Equal(HttpStatusCode.Forbidden,(await ordinary.PutAsJsonAsync($"/api/v1/admin/join-requests/{request}",new{approve=true})).StatusCode);
+        (await admin.PutAsJsonAsync($"/api/v1/admin/join-requests/{request}",new{approve=true})).EnsureSuccessStatusCode();
+        (await outsider.GetAsync("/api/v1/chat/workspace")).EnsureSuccessStatusCode();
+        var listing=await admin.GetStringAsync("/api/v1/admin/invites");Assert.DoesNotContain(token!,listing);
+    }
+
+    [Fact]
+    public async Task RevokedInvitesRejectNewRequestsAndPendingApproval()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        using var admin=(await Member(app,email)).Client;
+        var created=await (await admin.PostAsJsonAsync("/api/v1/admin/invites",new{hours=1,maxUses=5})).Content.ReadFromJsonAsync<JsonElement>();
+        var token=created.GetProperty("token").GetString();using var outsider=app.CreateClient();var email2=Guid.NewGuid()+"@example.test";outsider.DefaultRequestHeaders.Authorization=new AuthenticationHeaderValue("Bearer",fixture.Token(Guid.NewGuid(),Guid.NewGuid(),email2));
+        (await outsider.PostAsJsonAsync("/api/v1/auth/join-request",new{token})).EnsureSuccessStatusCode();
+        var request=(await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/join-requests")).EnumerateArray().Single(r=>r.GetProperty("email").GetString()==email2).GetProperty("id").GetGuid();
+        (await admin.DeleteAsync("/api/v1/admin/invites/"+created.GetProperty("id").GetString())).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.NotFound,(await outsider.PostAsJsonAsync("/api/v1/auth/join-request",new{token})).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict,(await admin.PutAsJsonAsync($"/api/v1/admin/join-requests/{request}",new{approve=true})).StatusCode);
+        (await admin.PutAsJsonAsync($"/api/v1/admin/join-requests/{request}",new{approve=false})).EnsureSuccessStatusCode();
+    }
+
+    [Fact]
+    public async Task StorageCleanupRequiresExactPreviewAndPreservesRecentFiles()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        using var admin=(await Member(app,email)).Client;using var member=(await Member(app)).Client;
+        Assert.Equal(HttpStatusCode.Forbidden,(await member.GetAsync("/api/v1/admin/storage/policy")).StatusCode);
+        var policy=await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/storage/policy");
+        (await admin.PutAsJsonAsync("/api/v1/admin/storage/policy",new{quotaMiB=512,retentionDays=30,version=policy.GetProperty("version").GetInt32()})).EnsureSuccessStatusCode();
+        var old=await (await admin.PostAsJsonAsync(Tools+"/attachments",new{clientId=Guid.NewGuid(),name="old.txt",content="aGVsbG8="})).Content.ReadFromJsonAsync<JsonElement>();var oldId=long.Parse(old.GetProperty("id").GetString()!);
+        var recent=await (await admin.PostAsJsonAsync(Tools+"/attachments",new{clientId=Guid.NewGuid(),name="recent.txt",content="aGVsbG8="})).Content.ReadFromJsonAsync<JsonElement>();var recentId=long.Parse(recent.GetProperty("id").GetString()!);
+        await using var db=fixture.Database();await db.Messages.Where(m=>m.Id==oldId).ExecuteUpdateAsync(s=>s.SetProperty(m=>m.CreatedAt,DateTimeOffset.UtcNow.AddDays(-40)));
+        var preview=await (await admin.PostAsJsonAsync("/api/v1/admin/storage/preview",new{})).Content.ReadFromJsonAsync<JsonElement>();Assert.Equal(1,preview.GetProperty("count").GetInt32());Assert.Equal(5,preview.GetProperty("bytes").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict,(await admin.PostAsJsonAsync("/api/v1/admin/storage/cleanup",new{cutoff=preview.GetProperty("cutoff").GetString(),fingerprint="changed"})).StatusCode);
+        (await admin.PostAsJsonAsync("/api/v1/admin/storage/cleanup",new{cutoff=preview.GetProperty("cutoff").GetString(),fingerprint=preview.GetProperty("fingerprint").GetString()})).EnsureSuccessStatusCode();
+        Assert.False(await db.MessageAttachments.AnyAsync(a=>a.MessageId==oldId));Assert.True(await db.MessageAttachments.AnyAsync(a=>a.MessageId==recentId));
+        policy=await admin.GetFromJsonAsync<JsonElement>("/api/v1/admin/storage/policy");(await admin.PutAsJsonAsync("/api/v1/admin/storage/policy",new{quotaMiB=512,retentionDays=0,version=policy.GetProperty("version").GetInt32()})).EnsureSuccessStatusCode();
+    }
+    [Fact]
+    public async Task InboxIsPrivateIdempotentAndReadStateSurvivesReconnect()
+    {
+        await using var app = fixture.App(); var a = await Member(app); var b = await Member(app); var c = await Member(app);
+        using var sender = a.Client; using var recipient = b.Client; using var stranger = c.Client;
+        var payload = new { clientId = Guid.NewGuid(), body = $"Olá <@{b.Id}>" };
+        var response = await sender.PostAsJsonAsync(Messages, payload); response.EnsureSuccessStatusCode();
+        var id = (await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetString();
+        (await sender.PostAsJsonAsync(Messages, payload)).EnsureSuccessStatusCode();
+        var inbox = await recipient.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox?unread=true");
+        Assert.Single(inbox.GetProperty("items").EnumerateArray());
+        Assert.Equal(id, inbox.GetProperty("items")[0].GetProperty("id").GetString());
+        Assert.Empty((await stranger.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox")).GetProperty("items").EnumerateArray());
+        (await stranger.PutAsync($"/api/v1/chat/inbox/{id}/read", null)).EnsureSuccessStatusCode();
+        Assert.Single((await recipient.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox?unread=true")).GetProperty("items").EnumerateArray());
+        (await recipient.PutAsync($"/api/v1/chat/inbox/{id}/read", null)).EnsureSuccessStatusCode();
+        Assert.Empty((await recipient.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox?unread=true")).GetProperty("items").EnumerateArray());
+        Assert.True((await recipient.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox")).GetProperty("items")[0].GetProperty("read").GetBoolean());
+        (await sender.DeleteAsync(Messages + "/" + id + "?version=1")).EnsureSuccessStatusCode();
+        Assert.Empty((await recipient.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox")).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task FollowedThreadsNotifyUntilUnfollowedAndRespectChannel()
+    {
+        await using var app = fixture.App(); var a = await Member(app); var b = await Member(app);
+        using var sender = a.Client; using var follower = b.Client;
+        var root = await (await sender.PostAsJsonAsync(Messages, new { clientId = Guid.NewGuid(), body = "Root" })).Content.ReadFromJsonAsync<JsonElement>();
+        var rootId = root.GetProperty("id").GetString(); var follow = Tools + "/threads/" + rootId + "/follow";
+        (await follower.PutAsJsonAsync(follow, new { enabled = true })).EnsureSuccessStatusCode();
+        Assert.True((await follower.GetFromJsonAsync<JsonElement>(follow)).GetProperty("enabled").GetBoolean());
+        Assert.Equal(HttpStatusCode.NotFound, (await follower.GetAsync($"/api/v1/chat/channels/{Guid.NewGuid()}/threads/{rootId}/follow")).StatusCode);
+        (await sender.PostAsJsonAsync(Messages, new { clientId = Guid.NewGuid(), body = "Followed answer", threadRootId = rootId })).EnsureSuccessStatusCode();
+        var inbox = await follower.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox");
+        Assert.Single(inbox.GetProperty("items").EnumerateArray());
+        Assert.Equal("thread", inbox.GetProperty("items")[0].GetProperty("kind").GetString());
+        (await follower.PutAsJsonAsync(follow, new { enabled = false })).EnsureSuccessStatusCode();
+        (await sender.PostAsJsonAsync(Messages, new { clientId = Guid.NewGuid(), body = "Not followed", threadRootId = rootId })).EnsureSuccessStatusCode();
+        Assert.Single((await follower.GetFromJsonAsync<JsonElement>("/api/v1/chat/inbox")).GetProperty("items").EnumerateArray());
+    }
+
+    [Fact]
+    public async Task AttachmentStorageManagementRequiresOwnerAndRevokesDownload()
+    {
+        var email = Guid.NewGuid() + "@example.test";
+        await using var app = fixture.App().WithWebHostBuilder(b => b.ConfigureAppConfiguration((_, c) => c.AddInMemoryCollection(new Dictionary<string, string?> { ["Admin:Email"] = email })));
+        var a = await Member(app, email); var b = await Member(app); using var owner = a.Client; using var member = b.Client;
+        var result = await member.PostAsJsonAsync(Tools + "/attachments", new { clientId = Guid.NewGuid(), name = "storage.txt", content = "aGVsbG8=" }); result.EnsureSuccessStatusCode();
+        var id = (await result.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("attachments")[0].GetProperty("id").GetString();
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.GetAsync("/api/v1/admin/attachments")).StatusCode);
+        Assert.Equal(HttpStatusCode.Forbidden, (await member.DeleteAsync("/api/v1/admin/attachments/" + id)).StatusCode);
+        var page = await owner.GetFromJsonAsync<JsonElement>("/api/v1/admin/attachments");
+        Assert.Contains(page.GetProperty("items").EnumerateArray(), item => item.GetProperty("id").GetString() == id);
+        (await owner.DeleteAsync("/api/v1/admin/attachments/" + id)).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.NotFound, (await member.GetAsync(Tools + "/attachments/" + id)).StatusCode);
+    }
+    [Fact]
     public async Task AttachmentLimitsAndThreadRootChannelAreEnforced()
     {
         await using var app = fixture.App(); var member = await Member(app); using var client = member.Client;

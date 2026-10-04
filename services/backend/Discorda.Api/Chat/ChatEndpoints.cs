@@ -117,9 +117,13 @@ public static class ChatEndpoints
             if (existing is not null) return existing.ChannelId == channelId && existing.ThreadRootId == input.ThreadRootId ? Results.Ok(await Views(db, x => x.Id == existing.Id).SingleAsync(ct)) : Results.Conflict();
             if (input.ThreadRootId is long root && !await db.Messages.AnyAsync(x => x.Id == root && x.ChannelId == channelId && x.ThreadRootId == null && x.DeletedAt == null, ct)) return Results.BadRequest();
             if (input.ReplyToId is long parent && !await db.Messages.AnyAsync(x => x.Id == parent && x.ChannelId == channelId, ct)) return Results.BadRequest();
+            await using var transaction = await db.Database.BeginTransactionAsync(ct);
             // Atomic idempotency under retries and concurrent requests.
             await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO discorda.messages (\"ChannelId\", \"AuthorId\", \"ClientId\", \"Body\", \"ReplyToId\", \"ThreadRootId\", \"CreatedAt\", \"Version\") VALUES ({channelId}, {user}, {input.ClientId}, {input.Body.Trim()}, {input.ReplyToId ?? input.ThreadRootId}, {input.ThreadRootId}, {DateTimeOffset.UtcNow}, 1) ON CONFLICT (\"AuthorId\", \"ClientId\") DO NOTHING", ct);
             var saved = await Views(db, x => x.AuthorId == user && x.ClientId == input.ClientId).SingleAsync(ct);
+            if (saved.ChannelId != channelId || saved.ThreadRootId != input.ThreadRootId?.ToString()) return Results.Conflict();
+            await Inbox.Record(db, long.Parse(saved.Id), ct);
+            await transaction.CommitAsync(ct);
             if (saved.ChannelId == channelId && saved.ThreadRootId == input.ThreadRootId?.ToString()) await live.Publish("message", saved);
             if (saved.ChannelId == channelId && input.ThreadRootId is long topic) await live.Publish("thread", new { channelId, id = topic.ToString(), count = await db.Messages.CountAsync(m => m.ThreadRootId == topic && m.DeletedAt == null, ct) });
             return saved.ChannelId == channelId && saved.ThreadRootId == input.ThreadRootId?.ToString() ? Results.Ok(saved) : Results.Conflict();

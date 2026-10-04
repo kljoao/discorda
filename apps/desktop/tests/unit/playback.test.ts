@@ -14,3 +14,8 @@ describe('per-member playback preferences',()=>{
   vi.stubGlobal('localStorage',{getItem:()=>'{broken'});expect(readVolumes()).toEqual({});
  });
 });
+
+it('preserves independent sharing mute without losing the saved volume',()=>{
+ vi.stubGlobal('localStorage',{getItem:()=>JSON.stringify({alice:{voice:150,screen:225,screenMuted:true}})});
+ expect(readVolumes().alice).toEqual({voice:150,screen:225,screenMuted:true});
+});

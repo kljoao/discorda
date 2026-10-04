@@ -22,3 +22,10 @@ describe('chat boundary', () => {
     expect(result[1].body).toBe('new');
   });
 });
+
+it('bounds search filters while allowing file-only queries',()=>{
+ const base={kind:'search',channelId:crypto.randomUUID(),query:''};
+ expect(()=>validateChatAction({...base,fileType:'image'})).not.toThrow();
+ expect(()=>validateChatAction({...base,author:crypto.randomUUID(),after:'2026-10-01'})).not.toThrow();
+ for(const filter of [{fileType:'../secret'},{author:'bad-id'},{after:'yesterday'},{}])expect(()=>validateChatAction({...base,...filter})).toThrow();
+});

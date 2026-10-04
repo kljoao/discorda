@@ -4,6 +4,8 @@ umask 077
 cd -- "$(dirname -- "${BASH_SOURCE[0]}")/.."
 compose=(docker compose --env-file .discorda/vps/compose.env -f infra/compose/vps.yml)
 case "${1:-status}" in
+  update) exec bash tools/update-vps.sh ;;
+  verify) exec python3 tools/verify-vps.py ;;
   database) "${compose[@]}" up -d --wait postgres ;;
   start)
     python3 tools/harden-database.py
@@ -31,5 +33,5 @@ case "${1:-status}" in
     report_backup true || printf "Backup concluído; não foi possível publicar o resumo no painel.\n" >&2
     printf 'Backup: %s\n' "$file"
     ;;
-  *) printf 'Uso: bash tools/vps.sh {database|start|status|logs|stop|backup}\n' >&2; exit 2 ;;
+  *) printf 'Uso: bash tools/vps.sh {database|start|status|logs|stop|backup|update|verify}\n' >&2; exit 2 ;;
 esac

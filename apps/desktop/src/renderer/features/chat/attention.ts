@@ -1,3 +1,4 @@
+import {privateSharing,quietSharing} from './privacy';
 import {playMentionSound} from './mention-sound';
 import {scopedKey} from '../../lib/server-scope';
 import {useEffect,useRef,useState} from 'react';
@@ -23,8 +24,8 @@ export function useChatAttention(workspace:ChatWorkspace|undefined){
   if(first){heard.current.add(m.id);if(heard.current.size>1000)heard.current.delete(heard.current.values().next().value!);}
   const mentioned=m.body.includes('<@'+workspace.userId+'>')||m.replyAuthorId===workspace.userId;
   if(first&&!m.deletedAt&&m.authorId!==workspace.userId&&!muted.includes(m.channelId)){
-   if(sounds&&mentioned)void playMentionSound();
-   if(notifications&&(!mentionsOnly||mentioned))void window.discorda?.notifyMessage(m.channelId).catch(()=>{});
+   if(sounds&&mentioned&&!quietSharing())void playMentionSound();
+   if(notifications&&!privateSharing()&&(!mentionsOnly||mentioned))void window.discorda?.notifyMessage(m.channelId).catch(()=>{});
   }
   if(!m.threadRootId&&newer(m.id,headRef.current[m.channelId])){headRef.current={...headRef.current,[m.channelId]:m.id};setHeads(headRef.current);}
  }),[workspace?.userId,notifications,mentionsOnly,muted,sounds]);

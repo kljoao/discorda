@@ -1,9 +1,11 @@
+import {usePrivateSharing} from '../chat/privacy';
 import { useEffect, useRef, useState } from 'react';
 import { LogIn, LogOut, LoaderCircle, RefreshCw } from 'lucide-react';
 import { Button } from '../../components/ui/button';
 import type { AuthState } from '../../../shared/ipc/contracts';
 
 export function AuthPanel({ onStateChange, accountView=false }: { accountView?:boolean; onStateChange?: (state: AuthState) => void }) {
+  const privateMode=usePrivateSharing();
   const [state, setState] = useState<AuthState>({ status: 'signed-out' });
   const [busy, setBusy] = useState(false);
   const [editing, setEditing] = useState(false);
@@ -47,7 +49,7 @@ export function AuthPanel({ onStateChange, accountView=false }: { accountView?:b
     <div className="connection-icon"><LogIn size={22} /></div>
     <div className="connection-copy">
       <h3>{state.status === 'signed-in' ? (accountView?state.profile.displayName:`Bom te ver, ${state.profile.displayName}.`) : state.status === 'signing-in' ? 'Continue no navegador' : state.status === 'unavailable' ? 'Vamos restabelecer a conexão' : 'Entre no seu grupo'}</h3>
-      <p role="status" aria-live="polite">{state.status === 'signed-in' ? `${state.profile.email} · Acesso ao grupo autorizado` : state.status === 'signing-in' ? 'Conclua o login no navegador e volte para cá.' : state.message || 'Entre com Google usando uma conta autorizada pelo grupo.'}</p>
+      <p role="status" aria-live="polite">{state.status === 'signed-in' ? privateMode?'Dados da conta ocultos durante a transmissão':`${state.profile.email} · Acesso ao grupo autorizado` : state.status === 'signing-in' ? 'Conclua o login no navegador e volte para cá.' : state.message || 'Entre com Google usando uma conta autorizada pelo grupo.'}</p>
       {editing && <form className="profile-form" onSubmit={saveName}><label>Nome no Discorda<input autoFocus aria-label="Nome no Discorda" maxLength={32} value={name} onChange={e=>setName(e.target.value)}/></label><button disabled={busy || !name.trim()}>Salvar nome</button><button type="button" disabled={busy} onClick={()=>setEditing(false)}>Cancelar</button>{profileError && <span role="alert">{profileError}</span>}</form>}
     </div>
     {state.status === 'signed-in' ? <><Button variant="outline" disabled={busy} onClick={()=>{setName(state.profile.displayName);setEditing(!editing);setProfileError('');}}>Editar nome</Button><Button variant="outline" disabled={busy} onClick={() => void run('signOut')}><LogOut />Sair</Button></>

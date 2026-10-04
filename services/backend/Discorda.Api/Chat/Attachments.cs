@@ -33,8 +33,9 @@ public static class Attachments
                 if (original is null || original.Name != input.Name.Trim() || !original.Content.AsSpan().SequenceEqual(bytes)) return Results.Conflict();
                 return Results.Ok(await ChatEndpoints.Views(db, m => m.Id == existing.Id).SingleAsync(ct));
             }
-            if (await db.MessageAttachments.CountAsync(ct) >= 10000 || await db.MessageAttachments.SumAsync(a => (long)a.Size, ct) + bytes.Length > 512L * 1024 * 1024)
-                return Results.Problem(statusCode: 507, title: "Limite de anexos do servidor atingido (512 MiB).");
+            var policy = await Discorda.Api.Admin.StorageManagement.Policy(db, ct);
+            if (await db.MessageAttachments.CountAsync(ct) >= 10000 || await db.MessageAttachments.SumAsync(a => (long)a.Size, ct) + bytes.Length > (long)policy.QuotaMiB * 1024 * 1024)
+                return Results.Problem(statusCode: 507, title: "Limite de anexos do servidor atingido.");
             var message = new Message { ChannelId = channelId, AuthorId = user, ClientId = input.ClientId, Body = input.Name.Trim() };
             db.Messages.Add(message); await db.SaveChangesAsync(ct);
             db.MessageAttachments.Add(new() { MessageId = message.Id, Name = input.Name.Trim(), Content = bytes, Size = bytes.Length });

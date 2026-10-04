@@ -2,6 +2,7 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type DesktopApi } from '../shared/ipc/contracts';
 
 const api: DesktopApi = {
+  streamWindow:action=>ipcRenderer.invoke(IPC.streamWindow,action),
   onPowerState:listener=>{const receive=(_event:Electron.IpcRendererEvent,state:'suspend'|'resume')=>listener(state);ipcRenderer.on(IPC.powerState,receive);return()=>ipcRenderer.removeListener(IPC.powerState,receive);},
   servers:action=>ipcRenderer.invoke(IPC.servers,action),
   onInvite:listener=>{const receive=()=>listener();ipcRenderer.on(IPC.inviteEvent,receive);return()=>ipcRenderer.removeListener(IPC.inviteEvent,receive);},

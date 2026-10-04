@@ -30,6 +30,9 @@ public static partial class RuntimeDatabasePermissions
             GRANT INSERT, UPDATE ON discorda.users, discorda.allowed_users, discorda.application_sessions,
                 discorda.workspaces, discorda.workspace_members, discorda.channels, discorda.messages, discorda.channel_reads TO {identifier};
             GRANT INSERT, DELETE ON discorda.message_reactions, discorda.message_pins, discorda.message_attachments TO {identifier};
+            GRANT INSERT, UPDATE ON discorda.inbox_entries TO {identifier};
+            GRANT INSERT, UPDATE ON discorda.server_invites, discorda.join_requests, discorda.storage_policy TO {identifier};
+            GRANT INSERT, DELETE ON discorda.thread_follows TO {identifier};
             GRANT INSERT ON discorda.access_audit, discorda.management_audit TO {identifier};
             GRANT USAGE, SELECT ON ALL SEQUENCES IN SCHEMA discorda TO {identifier};
             """;

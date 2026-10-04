@@ -16,9 +16,10 @@ export interface ServiceStatus {
 export interface DiagnosticReport {serverProtocol?:number;performance?:{cpuPercent:number;memoryMiB:number;processes:number};version:string;platform:string;checkedAt:string;api:ServiceStatus['api'];database:ServiceStatus['database'];chat:'connected'|'reconnecting'|'offline';attempts:number;lastConnected?:string;callActive:boolean;update:UpdateState['status'];}
 export type ServerAction={kind:'list'|'invite'|'dismissInvite'}|{kind:'select'|'remove';id:string}|{kind:'rename';id:string;name:string};
 export interface ServerList {servers:{id:string;name:string;address:string;current:boolean}[];pendingInvite?:string;invite?:string}
-export type AdminAction={kind:'settings'|'users'|'network'|'firewall'|'operations'|'operationsExport'}|{kind:'setup';name:string;textChannels:string[];voiceChannels:string[]}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
+export type AdminAction={kind:'invites'|'joinRequests'|'storagePolicy'|'storagePreview'}|{kind:'inviteCreate';hours:number;maxUses:number}|{kind:'inviteRevoke';id:string}|{kind:'joinReview';id:string;approve:boolean}|{kind:'storageSave';quotaMiB:number;retentionDays:number;version:number}|{kind:'storageCleanup';cutoff:string;fingerprint:string}|{kind:"attachments";before?:string}|{kind:"attachmentDelete";id:string}|{kind:'settings'|'users'|'network'|'firewall'|'operations'|'operationsExport'}|{kind:'setup';name:string;textChannels:string[];voiceChannels:string[]}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
 export interface ShortcutSettings {enabled:boolean;pushToTalk:boolean;mute:string;talk:string;deafen?:string;cinema?:string}
 export interface DesktopApi {
+  streamWindow?(action:{pinned?:boolean;compact?:boolean}):Promise<void>;
   onPowerState(listener:(state:'suspend'|'resume')=>void):()=>void;
   servers(action:ServerAction):Promise<ServerList>;
   onInvite(listener:()=>void):()=>void;
@@ -61,6 +62,7 @@ export type AuthState =
   | { status: 'signed-out' | 'unavailable' | 'signing-in'; message?: string };
 
 export const IPC = {
+  streamWindow:'media:viewer',
   servers:'app:servers',inviteEvent:'app:invite',
   shortcuts:'app:shortcuts',shortcutEvent:'app:shortcut-event',
   audioStatus:'media:audio-status', devicePermissions:'media:permissions', audioApplications:'media:applications', applicationAudio:'media:application-audio', applicationAudioData:'media:audio-data', applicationAudioEnd:'media:audio-end',
@@ -78,8 +80,8 @@ export const IPC = {
 export interface ChatMessage { threadReplyCount?:number; threadRootId?:string|null; attachments?:{id:string;name:string;size:number}[]; replyAuthorId?:string|null; id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
 export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Admin' | 'Moderator' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string;temporary?:boolean }[]; }
 export type ManagementAction = {kind:'manageMembers'} | {kind:'audit';before?:string} | {kind:'role';userId:string;role:'Admin'|'Moderator'|'Member'} | {kind:'moderateVoice';userId:string;channelId?:string};
-export type ChatAction = {kind:'message';channelId:string;id:string} | {kind:'temporaryRoom';name:string} | {kind:'attachmentUpload';channelId:string;clientId:string} | {kind:'attachmentGet';channelId:string;id:string;preview?:boolean} | {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
-  | {kind:'search';channelId:string;query:string;before?:string} | {kind:'pins';channelId:string;before?:string}
+export type ChatAction = {kind:'catchUp';since?:string}| {kind:"attachmentStage";name:string;bytes:Uint8Array}|{kind:"attachmentTransfer";channelId:string;clientId:string;token:string}|{kind:"attachmentProgress";token:string}|{kind:"attachmentCancel";token:string}| {kind:"inbox";before?:string;unread?:boolean}|{kind:"inboxRead";id:string}|{kind:"threadFollow";channelId:string;id:string;enabled?:boolean}| {kind:'message';channelId:string;id:string}|{kind:'context';channelId:string;id:string} | {kind:'temporaryRoom';name:string} | {kind:'attachmentUpload';channelId:string;clientId:string} | {kind:'attachmentGet';channelId:string;id:string;preview?:boolean} | {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
+  | {kind:'search';channelId:string;query:string;before?:string;author?:string;after?:string;until?:string;fileType?:'any'|'image'|'video'|'audio'|'document'} | {kind:'pins';channelId:string;before?:string}
   | {kind:'annotations';channelId:string;ids:string[]} | {kind:'reaction';channelId:string;id:string;emoji:string;enabled:boolean}
   | {kind:'pin';channelId:string;id:string;enabled:boolean} | { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }
   | { kind: 'history'; channelId: string; before?: string; thread?:string }
@@ -88,7 +90,7 @@ export type ChatAction = {kind:'message';channelId:string;id:string} | {kind:'te
   | { kind: 'delete'; channelId: string; id: string; version: number };
 export type ChatResult = { ok: true; data: unknown } | { ok: false; message: string; status?:number };
 export interface PresenceMember { avatarUrl?:string|null; id: string; name: string; status: 'online' | 'away' | 'offline'; typingChannelId: string | null; }
-export interface VoiceMember { leaseId?:string; channelId: string; userId: string; name: string; }
+export interface VoiceMember { screenSharing?:boolean; leaseId?:string; channelId: string; userId: string; name: string; }
 export type LiveEvent = {kind:'thread';data:{channelId:string;id:string;count:number}} | {kind:'voiceRoster';data:VoiceMember[]} | {kind:'annotations';data:{channelId:string;id?:string}} | {kind:'moderation';data:{userId:string;channelId:string|null}} | {kind:'voice';data:{userId:string;leaseId:string;channelId:string;speaking:boolean}} | { kind: 'profile'; data: {userId: string; displayName: string} } | { kind: 'message'; data: ChatMessage } | {kind: 'channels'; data: {id: string}}
   | { kind: 'presence'; data: PresenceMember[] } | { kind: 'connection'; data: 'connected' | 'reconnecting' | 'offline' };
 

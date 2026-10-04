@@ -39,3 +39,8 @@ it('refuses oversized or corrupt saved lists instead of silently destroying entr
   expect(await readFile(file,'utf8')).toBe(corrupt);
  }finally{if(path.dirname(directory)!==path.resolve(os.tmpdir()))throw Error('Unexpected test directory');await rm(directory,{recursive:true,force:true});}
 });
+
+it('preserves a bounded invitation token while keeping the destination independently validated',()=>{
+ const link=inviteLink('https://group.example.test','a'.repeat(64));expect(inviteAddress(link)).toBe('https://group.example.test');expect(new URL(link).searchParams.get('token')).toBe('a'.repeat(64));
+ for(const suffix of ['&token='+('b'.repeat(64)),'&command=run'])expect(()=>inviteAddress(link+suffix)).toThrow();
+});

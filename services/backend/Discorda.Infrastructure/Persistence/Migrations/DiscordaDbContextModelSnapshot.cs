@@ -91,6 +91,31 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.ToTable("channel_reads", "discorda");
                 });
 
+            modelBuilder.Entity("Discorda.Core.Channels.InboxEntry", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("MessageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Kind")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<bool>("Read")
+                        .HasColumnType("boolean");
+
+                    b.HasKey("UserId", "MessageId");
+
+                    b.HasIndex("MessageId");
+
+                    b.HasIndex("UserId", "Read", "MessageId");
+
+                    b.ToTable("inbox_entries", "discorda");
+                });
+
             modelBuilder.Entity("Discorda.Core.Channels.ManagementAudit", b =>
                 {
                     b.Property<long>("Id")
@@ -257,6 +282,21 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.ToTable("message_reactions", "discorda");
                 });
 
+            modelBuilder.Entity("Discorda.Core.Channels.ThreadFollow", b =>
+                {
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("MessageId")
+                        .HasColumnType("bigint");
+
+                    b.HasKey("UserId", "MessageId");
+
+                    b.HasIndex("MessageId");
+
+                    b.ToTable("thread_follows", "discorda");
+                });
+
             modelBuilder.Entity("Discorda.Core.Users.AccessAudit", b =>
                 {
                     b.Property<Guid>("Id")
@@ -383,6 +423,104 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.ToTable("users", "discorda");
                 });
 
+            modelBuilder.Entity("Discorda.Core.Workspaces.JoinRequest", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("CreatedAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<string>("Email")
+                        .IsRequired()
+                        .HasMaxLength(320)
+                        .HasColumnType("character varying(320)");
+
+                    b.Property<Guid>("InviteId")
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Issuer")
+                        .IsRequired()
+                        .HasMaxLength(256)
+                        .HasColumnType("character varying(256)");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
+                    b.Property<string>("Status")
+                        .IsRequired()
+                        .HasMaxLength(12)
+                        .HasColumnType("character varying(12)");
+
+                    b.Property<Guid>("Subject")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("InviteId", "Subject")
+                        .IsUnique();
+
+                    b.HasIndex("Status", "CreatedAt");
+
+                    b.ToTable("join_requests", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.ServerInvite", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<DateTimeOffset>("ExpiresAt")
+                        .HasColumnType("timestamp with time zone");
+
+                    b.Property<int>("MaxUses")
+                        .HasColumnType("integer");
+
+                    b.Property<bool>("Revoked")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("TokenHash")
+                        .IsRequired()
+                        .HasMaxLength(64)
+                        .HasColumnType("character varying(64)");
+
+                    b.Property<int>("Uses")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("TokenHash")
+                        .IsUnique();
+
+                    b.ToTable("server_invites", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.StoragePolicy", b =>
+                {
+                    b.Property<int>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("integer");
+
+                    NpgsqlPropertyBuilderExtensions.UseIdentityByDefaultColumn(b.Property<int>("Id"));
+
+                    b.Property<int>("QuotaMiB")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("RetentionDays")
+                        .HasColumnType("integer");
+
+                    b.Property<int>("Version")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.ToTable("storage_policy", "discorda");
+                });
+
             modelBuilder.Entity("Discorda.Core.Workspaces.Workspace", b =>
                 {
                     b.Property<Guid>("Id")
@@ -445,6 +583,21 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.HasOne("Discorda.Core.Channels.Channel", null)
                         .WithMany()
                         .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.InboxEntry", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
 
@@ -519,6 +672,21 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Discorda.Core.Channels.ThreadFollow", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
             modelBuilder.Entity("Discorda.Core.Users.AllowedUser", b =>
                 {
                     b.HasOne("Discorda.Core.Users.User", null)
@@ -533,6 +701,15 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("UserId")
                         .OnDelete(DeleteBehavior.Restrict)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.JoinRequest", b =>
+                {
+                    b.HasOne("Discorda.Core.Workspaces.ServerInvite", null)
+                        .WithMany()
+                        .HasForeignKey("InviteId")
+                        .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });
 

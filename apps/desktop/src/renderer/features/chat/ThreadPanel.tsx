@@ -1,3 +1,4 @@
+import {useVisibleReceipt} from './visible-receipt';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import type {ChatMessage,PresenceMember} from '../../../shared/ipc/contracts';
 import {mergeMessages} from './Chat';
@@ -5,9 +6,13 @@ import {MessageFiles} from './Attachments';
 import {formatMentions} from './mention-text';
 import {scopedKey} from '../../lib/server-scope';
 const drafts=new Map<string,{body:string;clientId?:string;replyToId?:string}>();
-export function ThreadPanel({root,close,presence,userId,canModerate}:{root:ChatMessage;close:()=>void;presence:PresenceMember[];userId:string;canModerate:boolean}){
+export function ThreadPanel({root,close,presence,userId,canModerate,targetId,visible=true}:{visible?:boolean;targetId?:string;root:ChatMessage;close:()=>void;presence:PresenceMember[];userId:string;canModerate:boolean}){
+ const [following,setFollowing]=useState(false),[followBusy,setFollowBusy]=useState(false);
+ useEffect(()=>{let alive=true;void window.discorda?.chat({kind:'threadFollow',channelId:root.channelId,id:root.id}).then(r=>{if(alive&&r.ok)setFollowing((r.data as {enabled:boolean}).enabled);});return()=>{alive=false;};},[root.id]);
+ async function follow(){setFollowBusy(true);try{const r=await window.discorda!.chat({kind:'threadFollow',channelId:root.channelId,id:root.id,enabled:!following});if(!r.ok)throw Error(r.message);setFollowing(!following);}catch{setError('Não foi possível alterar o acompanhamento.');}finally{setFollowBusy(false);}}
  const key=scopedKey('thread:'+root.channelId+':'+root.id+':'+userId);
  const [items,setItems]=useState<ChatMessage[]>([]),[draft,setDraft]=useState(drafts.get(key)?.body??''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[more,setMore]=useState(false),[loading,setLoading]=useState(false);
+ useVisibleReceipt(targetId,visible,items);
  const [reply,setReply]=useState<ChatMessage>(),[editing,setEditing]=useState<ChatMessage>(),[removing,setRemoving]=useState<string>();
  const input=useRef<HTMLTextAreaElement>(null),alive=useRef(true),fetching=useRef(false),historical=useRef(false),pending=useRef(drafts.get(key)?.clientId?drafts.get(key):undefined);
  const names=useMemo(()=>new Map(presence.map(p=>[p.id,p])),[presence]);
@@ -22,13 +27,14 @@ export function ThreadPanel({root,close,presence,userId,canModerate}:{root:ChatM
   finally{fetching.current=false;if(alive.current)setLoading(false);}
  }
  useEffect(()=>{
-  alive.current=true;void load();input.current?.focus();
+  alive.current=true;
+  if(targetId){historical.current=true;setLoading(true);void window.discorda!.chat({kind:'message',channelId:root.channelId,id:targetId}).then(r=>{if(!alive.current)return;if(!r.ok)throw Error(r.message);const message=r.data as ChatMessage;if(message.threadRootId!==root.id)throw Error('Resposta não pertence ao tópico.');setItems([message]);setMore(true);}).catch(()=>{if(alive.current)setError('Não foi possível abrir essa resposta.');}).finally(()=>{if(alive.current)setLoading(false);});}else void load();input.current?.focus();
   const off=window.discorda?.onLiveEvent(e=>{
    if(e.kind==='message'&&e.data.channelId===root.channelId&&e.data.threadRootId===root.id)setItems(old=>historical.current&&!old.some(m=>m.id===e.data.id)?old:mergeMessages(old,[e.data]).slice(-200));
    if(e.kind==='connection'&&e.data==='connected'&&!historical.current)void load();
   });const timer=setInterval(()=>{if(!historical.current&&document.visibilityState==='visible')void load();},30000);
   return()=>{alive.current=false;off?.();clearInterval(timer);};
- },[root.id]);
+ },[root.id,targetId]);
  async function send(){
   if(busy||!draft.trim())return;setBusy(true);setError('');
   if(!editing){pending.current??={clientId:crypto.randomUUID(),body:draft,replyToId:reply?.id??root.id};drafts.set(key,pending.current);}
@@ -42,12 +48,13 @@ export function ThreadPanel({root,close,presence,userId,canModerate}:{root:ChatM
  async function remove(m:ChatMessage){setBusy(true);try{const result=await window.discorda!.chat({kind:'delete',channelId:root.channelId,id:m.id,version:m.version});if(!result.ok)throw Error(result.message);if(alive.current){setItems(old=>mergeMessages(old,[result.data as ChatMessage]));setRemoving(undefined);}}catch(e){setError(e instanceof Error?e.message:'Falha ao excluir.');}finally{if(alive.current)setBusy(false);}}
  return <aside className="thread-panel" aria-label="Tópico">
   <header><div><strong>Tópico</strong><small>Respostas separadas do canal</small></div><button aria-label="Fechar tópico" onClick={close}>×</button></header>
+  <button disabled={followBusy} aria-pressed={following} onClick={()=>void follow()}>{following?"Seguindo tópico · deixar de seguir":"Seguir tópico"}</button>
   <blockquote><strong>{root.authorName}</strong><p>{root.deletedAt?'Mensagem excluída':formatMentions(root.body,names).text}</p></blockquote>
   <div className="thread-messages" aria-live="polite">
    {more&&<button disabled={loading} onClick={()=>void load(items[0]?.id)}>Respostas anteriores</button>}
    {historical.current&&<button onClick={()=>void load(undefined,true)}>Voltar às respostas recentes</button>}
    {loading&&!items.length&&<p>Carregando tópico…</p>}{!loading&&!items.length&&<p>Aprofunde essa conversa aqui.</p>}
-   {items.map(m=><article key={m.id}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time><p>{m.deletedAt?'Mensagem excluída':formatMentions(m.body,names).text}</p><MessageFiles message={m}/>
+   {items.map(m=><article data-inbox-id={m.id} key={m.id}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time><p>{m.deletedAt?'Mensagem excluída':formatMentions(m.body,names).text}</p><MessageFiles message={m}/>
     {!m.deletedAt&&<div className="thread-actions"><button disabled={busy||!!pending.current} onClick={()=>{setReply(m);setEditing(undefined);input.current?.focus();}}>Responder</button>{m.authorId===userId&&<button disabled={busy||!!pending.current} onClick={()=>{setEditing(m);setReply(undefined);setDraft(m.body);input.current?.focus();}}>Editar</button>}{(m.authorId===userId||canModerate)&&<button disabled={busy} onClick={()=>setRemoving(m.id)}>Excluir</button>}</div>}
     {removing===m.id&&<div>Excluir resposta?<button disabled={busy} onClick={()=>void remove(m)}>Confirmar</button><button onClick={()=>setRemoving(undefined)}>Cancelar</button></div>}
    </article>)}

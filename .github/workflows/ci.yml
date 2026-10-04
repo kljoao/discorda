@@ -31,6 +31,7 @@ jobs:
       - run: dotnet test Discorda.slnx -c Release --no-build
       - run: python3 tools/test-setup-vps.py
       - run: python3 tools/test-vps-backup.py
+      - run: python3 tools/test-vps-update.py
       - run: docker build -f services/backend/Discorda.Api/Dockerfile -t discorda-api:ci .
   desktop:
     runs-on: windows-latest

@@ -1,3 +1,8 @@
+import {useVisibleReceipt} from './visible-receipt';
+import {CatchUp} from './CatchUp';
+import {usePrivateSharing} from './privacy';
+import {useFileComposer} from './FileComposer';
+import {Inbox,type InboxItem} from './Inbox';
 import {MessageFiles} from './Attachments';
 import {ThreadPanel} from './ThreadPanel';
 import {formatMentions,applyMentionEdit,mentionOffset,findMention} from './mention-text';
@@ -36,11 +41,14 @@ export function mergeMessages(previous: ChatMessage[], incoming: ChatMessage[]) 
 const errorMessage = (error: unknown) => error instanceof Error ? error.message : 'Não foi possível concluir.';
 
 export function Chat({ account }: { account: ReactNode }) {
+  const privateMode=usePrivateSharing();
+  const [reviewOpen,setReviewOpen]=useState(false);
   const [showMedia,setShowMedia]=useState(false);
   const [mediaHost,setMediaHost]=useState<HTMLDivElement|null>(null);
   const [dockHost,setDockHost]=useState<HTMLDivElement|null>(null);
   const [workspace, setWorkspace] = useState<ChatWorkspace>();
   const attention=useChatAttention(workspace);
+  const [inboxTarget,setInboxTarget]=useState<InboxItem>();
   const [adminOpen,setAdminOpen]=useState(false);
   const [membersOpen,setMembersOpen]=useState(true);
   const [memberQuery,setMemberQuery]=useState('');
@@ -71,8 +79,9 @@ export function Chat({ account }: { account: ReactNode }) {
     }catch{if(mounted.current&&revision===membersRevision.current)setMembersState('error');}
   }
   useEffect(()=>{if(!workspace)return;void loadMembers();const timer=setInterval(()=>void loadMembers(),15000);return()=>{clearInterval(timer);membersRevision.current++;};},[workspace?.id]);
+  useEffect(()=>{if(workspace&&selected)try{localStorage.setItem(scopedKey('channel:'+workspace.userId),selected);}catch{}},[selected,workspace?.userId]);
   async function load(start = true) {
-    try { const data = await request<ChatWorkspace>({ kind: 'workspace' }); if (!mounted.current) return; setWorkspace(data); setSelected(current => current ?? data.channels[0]?.id); setError(''); if (start) await window.discorda?.startLive(); }
+    try { const data = await request<ChatWorkspace>({ kind: 'workspace' }); if (!mounted.current) return; setWorkspace(data); setSelected(current => {let saved:string|null=null;try{saved=localStorage.getItem(scopedKey('channel:'+data.userId));}catch{}return data.channels.find(c=>c.id===(current??saved))?.id??data.channels[0]?.id;}); setError(''); if (start) await window.discorda?.startLive(); }
     catch (e) { if (mounted.current) setError(errorMessage(e)); }
   }
   useEffect(() => {
@@ -99,7 +108,7 @@ export function Chat({ account }: { account: ReactNode }) {
   return <div className={'chat-shell'+(!membersOpen||showMedia?' members-collapsed':'')}>
     <a className="skip-conversation" href="#conversation-main">Ir para a conversa</a><Servers rail currentName={workspace?.name}/><aside className="chat-sidebar"><ServerHeader workspace={workspace} onRename={()=>load(false)} onManage={()=>setAdminOpen(true)} notifications={<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.sounds} onChange={attention.toggleSounds}/> Som de menções e respostas</label><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas menções e respostas</label>}</details>}/>
       <div className="sidebar-scroll">
-      {adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}<div className="chat-channel-label">Canais de texto{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
+      {adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}{workspace&&<CatchUp workspace={workspace} onOpenChange={setReviewOpen} onChannel={id=>{setSelected(id);setShowMedia(false);}} onSelect={item=>{setInboxTarget({...item});setSelected(item.channelId);setShowMedia(false);}}/>}<Inbox onOpenChange={setReviewOpen} onSelect={item=>{setInboxTarget({...item});setSelected(item.channelId);setShowMedia(false);}}/><div className="chat-channel-label">Canais de texto{workspace?.isAdmin && <button onClick={() => setNewChannel(!newChannel)} aria-label="Criar canal"><Plus size={16} /></button>}</div>
       {newChannel && <form className="channel-form" onSubmit={createChannel}><input autoFocus aria-label="Nome do canal" value={name} maxLength={80} onChange={e => setName(e.target.value)} /><button disabled={creating || !name.trim()}>Criar</button></form>}
       <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={!showMedia && selected === item.id ? 'selected' : ''} aria-current={!showMedia && selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>)}</nav>
       <Voice presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} account={account} self={presence.find(p=>p.id===workspace?.userId)}/>
@@ -109,7 +118,7 @@ export function Chat({ account }: { account: ReactNode }) {
     <main id="conversation-main" tabIndex={-1} className="chat-main">{connection!=='connected'&&<div className="workspace-toolbar"><div className={`live-status ${connection}`} role="status">{connection === 'reconnecting' ? 'Reconectando… seu rascunho continua aqui.' : 'Tempo real indisponível. Tentando reconectar…'}<button onClick={()=>void window.discorda?.reconnectLive()}>Reconectar chat</button></div></div>}
       {error && <div className="chat-error" role="alert">{error} <button onClick={() => void load()}>Tentar novamente</button></div>}
       <div ref={setMediaHost} className="call-stage" hidden={!showMedia}/>
-      <div className="text-stage" hidden={showMedia}>{workspace && channel ? <Conversation membersOpen={membersOpen} toggleMembers={()=>setMembersOpen(!membersOpen)} readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
+      <div className="text-stage" hidden={showMedia}>{privateMode&&<div className="privacy-cover" role="status">Modo de privacidade ativo · conversas ocultas durante a transmissão</div>}{workspace && channel ? <Conversation channels={workspace.channels} onNavigate={message=>{setInboxTarget({...message,channelName:workspace.channels.find(c=>c.id===message.channelId)?.name??'',kind:'search',read:false,threadRootId:message.threadRootId??undefined});setSelected(message.channelId);}} inboxTarget={inboxTarget} membersOpen={membersOpen} toggleMembers={()=>setMembersOpen(!membersOpen)} readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia&&!reviewOpen&&!privateMode} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
     </main>
     <aside id="members-list" className="members-rail" hidden={!membersOpen||showMedia} aria-label="Membros disponíveis"><div className="members-heading"><h2>Pessoas do grupo</h2><span>{presence.length}</span></div><label className="member-search"><Search size={15}/><input type="search" aria-label="Buscar membros" placeholder="Buscar pessoa" maxLength={80} value={memberQuery} onChange={e=>setMemberQuery(e.target.value)}/></label>
       {(['online','away','offline'] as const).map(status=>{
@@ -128,12 +137,11 @@ export function Chat({ account }: { account: ReactNode }) {
   </div>;
 }
 
-function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {membersOpen:boolean;toggleMembers:()=>void;readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
+function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMembers,readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {channels:{id:string;name:string}[];onNavigate:(message:ChatMessage)=>void;inboxTarget?:InboxItem;membersOpen:boolean;toggleMembers:()=>void;readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
   const [thread,setThread]=useState<ChatMessage>();
-  const [uploading,setUploading]=useState(false);
-  const uploadId=useRef<string|undefined>(undefined);
-  async function upload(){if(uploading)return;setUploading(true);setError('');uploadId.current??=crypto.randomUUID();try{const result=await window.discorda!.chat({kind:'attachmentUpload',channelId:channel.id,clientId:uploadId.current});if(!result.ok){if(result.status===409){uploadId.current=undefined;throw Error('O envio anterior já foi confirmado. Selecione o novo arquivo novamente.');}throw Error(result.message);}uploadId.current=undefined;if(result.data)setMessages(old=>receive(old,[result.data as ChatMessage]));}catch(e){setError(errorMessage(e));}finally{setUploading(false);}}
   const [messages, setMessages] = useState<ChatMessage[]>([]);
+  useVisibleReceipt(inboxTarget?.threadRootId?undefined:inboxTarget?.id,visible,messages);
+  const files=useFileComposer(channel.id,message=>setMessages(old=>receive(old,[message])));
   const historicalRef=useRef(false);
   const [historical,setHistorical]=useState(false);
   const [boundary,setBoundary]=useState<string>();
@@ -199,6 +207,12 @@ function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModera
   const [pending, setPending] = useState<Extract<ChatAction, {kind: 'send'}> | undefined>(pendingSends.get(channel.id));
   const alive = useRef(true);
   const list = useRef<HTMLDivElement>(null);
+  const scrollKey=scopedKey('reading:'+userId+':'+channel.id);
+  const savedPosition=useRef<{id:string;offset:number}|undefined>((()=>{try{const p=JSON.parse(localStorage.getItem(scrollKey)??'null');if(p&&/^[1-9]\d{0,18}$/.test(p.id)&&BigInt(p.id)<9223372036854775807n&&Number.isFinite(p.offset)&&Math.abs(p.offset)<10000)return p;}catch{}return undefined;})());
+  const restoring=useRef(!!savedPosition.current),saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
+  function savePosition(){if(restoring.current||!list.current)return;try{if(nearBottom.current){localStorage.removeItem(scrollKey);return;}const bounds=list.current.getBoundingClientRect();const first=Array.from(list.current.querySelectorAll<HTMLElement>('.chat-message')).find(el=>el.getBoundingClientRect().bottom>bounds.top);if(first)localStorage.setItem(scrollKey,JSON.stringify({id:first.id.replace('message-',''),offset:first.getBoundingClientRect().top-bounds.top}));}catch{}}
+  useEffect(()=>()=>{clearTimeout(saveTimer.current);savePosition();},[]);
+
   const nearBottom = useRef(true);
   const [atBottom,setAtBottom]=useState(true);
   const readCallback=useRef(onRead);readCallback.current=onRead;
@@ -212,13 +226,16 @@ function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModera
     if(historicalRef.current&&last)incoming=incoming.filter(m=>BigInt(m.id)<=BigInt(last));
     return mergeMessages(current,incoming.filter(m=>!m.threadRootId)).slice(-500);
   }
-  function latest(){historicalRef.current=false;setHistorical(false);nearBottom.current=true;currentMessages.current=[];setMessages([]);initialLoaded.current=false;void synchronize();}
+  const contextEpoch=useRef(0);
+  async function showContext(message:ChatMessage){const ticket=++contextEpoch.current;restoring.current=false;savedPosition.current=undefined;historicalRef.current=true;setHistorical(true);nearBottom.current=false;setMessages([message]);setHasMore(false);try{const page=await request<{items:ChatMessage[];hasMore:boolean}>({kind:'context',channelId:channel.id,id:message.id});if(!alive.current||ticket!==contextEpoch.current)return;setMessages(page.items);setHasMore(page.hasMore);requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}catch(e){if(alive.current&&ticket===contextEpoch.current)setError(errorMessage(e));}}
+  function latest(){contextEpoch.current++;restoring.current=false;savedPosition.current=undefined;try{localStorage.removeItem(scrollKey);}catch{}historicalRef.current=false;setHistorical(false);nearBottom.current=true;currentMessages.current=[];setMessages([]);initialLoaded.current=false;void synchronize();}
   useEffect(()=>{const ids=new Set(messages.map(m=>m.id));annotationCache.current=new Set([...annotationCache.current].filter(id=>ids.has(id)));setAnnotations(old=>({reactions:old.reactions.filter(r=>ids.has(r.id)),pins:old.pins.filter(id=>ids.has(id))}));},[messages]);
   async function history(before?: string) {
     if (fetching.current) return; fetching.current = true;
     try {
       const page = await request<{items: ChatMessage[]; hasMore: boolean}>({kind: 'history', channelId: channel.id, before});
-      if (!alive.current) return;
+      if (!alive.current||(!before&&historicalRef.current)) return;
+      if(restoring.current&&!page.items.length){restoring.current=false;savedPosition.current=undefined;historicalRef.current=false;setHistorical(false);nearBottom.current=true;needsSync.current=true;}
       const merged=mergeMessages(currentMessages.current,page.items);
       if(before&&merged.length>500){historicalRef.current=true;setHistorical(true);}
       setMessages(before?merged.slice(0,500):merged.slice(-500));
@@ -265,10 +282,11 @@ function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModera
       if (event.kind === 'message' && event.data.channelId === channel.id) setMessages(current => receive(current, [event.data]));
       if (event.kind === 'connection' && event.data === 'connected') void synchronize();
     });
-    void history(); void window.discorda?.liveActivity(channel.id, false);
+    if(savedPosition.current){historicalRef.current=true;setHistorical(true);nearBottom.current=false;void history(String(BigInt(savedPosition.current.id)+1n));}else void history(); void window.discorda?.liveActivity(channel.id, false);
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void synchronize(); }, 60000);
     return () => { alive.current = false; off?.(); clearInterval(timer); void window.discorda?.liveActivity(channel.id, false); };
   }, []);
+  useEffect(()=>{if(!restoring.current||!messages.length||!list.current)return;const saved=savedPosition.current;const anchor=saved?document.getElementById('message-'+saved.id):null;if(anchor&&saved)list.current.scrollTop+=anchor.getBoundingClientRect().top-list.current.getBoundingClientRect().top-saved.offset;restoring.current=false;},[messages]);
   useEffect(() => { if (nearBottom.current) list.current?.scrollTo({ top: list.current.scrollHeight }); }, [messages]);
   useEffect(()=>{const mark=()=>{const last=currentMessages.current.at(-1);if(!historicalRef.current&&readReady&&last&&visibleRef.current&&nearBottom.current&&document.visibilityState==='visible'&&document.hasFocus())readCallback.current(last.id);};mark();window.addEventListener('focus',mark);document.addEventListener('visibilitychange',mark);return()=>{window.removeEventListener('focus',mark);document.removeEventListener('visibilitychange',mark);};},[messages,visible,atBottom,readReady]);
   function changeDraft(value: string) { setDraft(value); drafts.set(channel.id, value); try{if(value)localStorage.setItem(draftKey,value);else localStorage.removeItem(draftKey);}catch{} void window.discorda?.liveActivity(channel.id, value.trim().length > 0); }
@@ -291,14 +309,18 @@ function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModera
     catch (e) { if (alive.current) setError(errorMessage(e)); }
     finally { if (alive.current) setBusy(false); }
   }
-  return <section className={"conversation"+(thread?" with-thread":"")} aria-label={`Canal ${channel.name}`}>
-    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" title={muted?'Ativar avisos deste canal':'Silenciar este canal'} aria-label={muted?'Ativar avisos deste canal':'Silenciar este canal'} aria-pressed={muted} onClick={toggleMuted}><Bell size={18}/></button><HistoryTools channelId={channel.id} onSelect={message=>{if(message.threadRootId){void request<ChatMessage>({kind:'message',channelId:channel.id,id:message.threadRootId}).then(setThread).catch(e=>setError(errorMessage(e)));return;}historicalRef.current=true;setHistorical(true);setMessages([message]);setHasMore(true);nearBottom.current=false;requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}}/><button className="members-toggle" aria-label="Mostrar membros" aria-expanded={membersOpen} aria-controls="members-list" title="Mostrar ou ocultar membros" onClick={toggleMembers}><Users size={19}/></button></div>
+
+  useEffect(()=>{if(!inboxTarget||inboxTarget.channelId!==channel.id)return;let active=true;
+   void request<ChatMessage>({kind:'message',channelId:channel.id,id:inboxTarget.threadRootId??inboxTarget.id}).then(message=>{if(!active)return;if(inboxTarget.threadRootId){setThread(message);return;}void showContext(message);}).catch(e=>{if(active)setError(errorMessage(e));});return()=>{active=false;};
+  },[inboxTarget]);
+  return <section className={"conversation"+(thread?" with-thread":"")} aria-label={`Canal ${channel.name}`} onDragOver={e=>{if(e.dataTransfer.types.includes('Files'))e.preventDefault();}} onDrop={e=>{if(e.dataTransfer.files.length){e.preventDefault();void files.stage(e.dataTransfer.files[0]);}}} onPaste={e=>{const image=Array.from(e.clipboardData.files).find(f=>f.type.startsWith('image/'));if(image){e.preventDefault();void files.stage(image);}}}>
+    <div className="chat-heading"><Hash /><h1>{channel.name}</h1><button className="mute-channel" title={muted?'Ativar avisos deste canal':'Silenciar este canal'} aria-label={muted?'Ativar avisos deste canal':'Silenciar este canal'} aria-pressed={muted} onClick={toggleMuted}><Bell size={18}/></button><HistoryTools channels={channels} members={presence} channelId={channel.id} onSelect={message=>{if(message.channelId!==channel.id){onNavigate(message);return;}if(message.threadRootId){onNavigate(message);return;}void showContext(message);}}/><button className="members-toggle" aria-label="Mostrar membros" aria-expanded={membersOpen} aria-controls="members-list" title="Mostrar ou ocultar membros" onClick={toggleMembers}><Users size={19}/></button></div>
     {firstUnread>=0&&<div className="unread-banner"><span>Novas mensagens desde sua última leitura</span><button onClick={()=>document.getElementById('message-'+messages[firstUnread].id)?.scrollIntoView({block:'start'})}>Ir para a primeira</button><button onClick={()=>setBoundary(messages.at(-1)?.id??'0')}>Dispensar</button></div>}
-    <div className="message-list" ref={list} onScroll={() => { const node = list.current!; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;setAtBottom(nearBottom.current); }}>
+    <div className="message-list" ref={list} onScroll={() => { const node = list.current!; nearBottom.current = node.scrollHeight - node.scrollTop - node.clientHeight < 80;setAtBottom(nearBottom.current);clearTimeout(saveTimer.current);saveTimer.current=setTimeout(savePosition,250); }}>
       {historical&&<div className="unread-banner" role="status">Você está consultando o histórico.</div>}
       {(hasMore||messages.length===500) && <button className="older-button" disabled={olderBusy || loading} onClick={() => { nearBottom.current = false; setOlderBusy(true); void history(messages[0]?.id); }}>Carregar anteriores</button>}
       {messages.length === 0 && <div className="chat-empty"><Hash size={42} /><h2>Bem-vindo a #{channel.name}</h2><p>{loading ? 'Carregando mensagens…' : 'A conversa começa com a primeira mensagem.'}</p></div>}
-      {messages.map((message,messagePosition) => <article className={'chat-message'+(!message.deletedAt&&message.body.includes('<@'+userId+'>')?' is-mentioned':'')+(!message.deletedAt&&message.replyAuthorId===userId?' is-reply-to-me':'')} id={"message-"+message.id} key={message.id} aria-label={`Mensagem de ${message.authorName}`}>
+      {messages.map((message,messagePosition) => <article data-inbox-id={message.id} className={'chat-message'+(!message.deletedAt&&message.body.includes('<@'+userId+'>')?' is-mentioned':'')+(!message.deletedAt&&message.replyAuthorId===userId?' is-reply-to-me':'')} id={"message-"+message.id} key={message.id} aria-label={`Mensagem de ${message.authorName}`}>
         {messagePosition===firstUnread&&<div className="unread-divider">Novas mensagens</div>}{(messagePosition===0||new Date(messages[messagePosition-1].createdAt).toDateString()!==new Date(message.createdAt).toDateString())&&<div className="message-date"><time dateTime={message.createdAt}>{new Date(message.createdAt).toLocaleDateString('pt-BR',{day:'numeric',month:'long',year:'numeric'})}</time></div>}<div className="message-avatar"><Avatar url={presenceIndex.get(message.authorId)?.avatarUrl} name={message.authorName}/></div><div className="message-content">
           <div className="message-meta"><strong>{message.authorName}</strong><time dateTime={message.createdAt} title={new Date(message.createdAt).toLocaleString('pt-BR')}>{new Date(message.createdAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</time>{message.editedAt && !message.deletedAt && <small>editada</small>}</div>
           {message.replyToId && <div className="message-reply"><Reply size={13} />{messageIndex.get(message.replyToId)?.body.slice(0, 100) || 'Resposta a uma mensagem anterior'}</div>}
@@ -310,11 +332,11 @@ function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModera
         </div>
       </article>)}
     </div>
-    {uploading&&<div role="status" className="chat-error">Selecionando e enviando arquivo…</div>}{error && <div className="chat-error" role="alert">{error} <button onClick={() => void history()}>Atualizar</button></div>}
+    {files.panel}{error && <div className="chat-error" role="alert">{error} <button onClick={() => void history()}>Atualizar</button></div>}
     <div className="recent-messages">{(!atBottom||historical)&&<button onClick={()=>{if(historicalRef.current)latest();nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
     <form className="message-composer" onSubmit={submit} onKeyDown={event=>{if(event.key==='Escape'){setEmojis(false);setMentionOpen(false);composer.current?.focus();}}}>
       {(reply || edit) && <div className="composer-context">{edit ? 'Editando mensagem' : `Respondendo a ${reply?.authorName}`}<button type="button" disabled={busy || !!pending} aria-label="Cancelar resposta ou edição" onClick={() => { setReply(undefined); setEdit(undefined); changeDraft(''); }}><X size={14} /></button></div>}
-      <div className="composer-row"><button type="button" disabled={uploading||busy} title="Enviar imagem ou arquivo (até 8 MiB)" aria-label="Enviar arquivo" onClick={()=>void upload()}>{uploading?'…':'＋'}</button><textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={mentionDisplay.text} aria-autocomplete="list" aria-controls={mentionOpen?'mention-suggestions':undefined} aria-activedescendant={mentionOpen&&suggestions.length?'mention-option-'+Math.min(mentionChoice,suggestions.length-1):undefined} readOnly={busy || !!pending} onChange={event => {const next=applyMentionEdit(draft,mentionDisplay,event.target.value,beforeEdit.current);beforeEdit.current=undefined;if(next.length<=4000){changeDraft(next);checkMention(event.target.value,event.target.selectionStart);}}} onClick={event=>checkMention(mentionDisplay.text,event.currentTarget.selectionStart)} onKeyUp={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))checkMention(mentionDisplay.text,event.currentTarget.selectionStart);}} onKeyDown={event => {
+      <div className="composer-row">{files.button}<textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={mentionDisplay.text} aria-autocomplete="list" aria-controls={mentionOpen?'mention-suggestions':undefined} aria-activedescendant={mentionOpen&&suggestions.length?'mention-option-'+Math.min(mentionChoice,suggestions.length-1):undefined} readOnly={busy || !!pending} onChange={event => {const next=applyMentionEdit(draft,mentionDisplay,event.target.value,beforeEdit.current);beforeEdit.current=undefined;if(next.length<=4000){changeDraft(next);checkMention(event.target.value,event.target.selectionStart);}}} onClick={event=>checkMention(mentionDisplay.text,event.currentTarget.selectionStart)} onKeyUp={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))checkMention(mentionDisplay.text,event.currentTarget.selectionStart);}} onKeyDown={event => {
         if(event.nativeEvent.isComposing)return;
         if(mentionOpen&&event.key==='Escape'){event.preventDefault();event.stopPropagation();setMention(undefined);return;}
         if(mentionOpen&&suggestions.length&&['ArrowDown','ArrowUp','Enter','Tab'].includes(event.key)&&!event.shiftKey){event.preventDefault();if(event.key==='ArrowDown'||event.key==='ArrowUp')setMentionChoice(current=>(current+(event.key==='ArrowDown'?1:-1)+suggestions.length)%suggestions.length);else insertMention(suggestions[Math.min(mentionChoice,suggestions.length-1)]);return;}
@@ -323,6 +345,6 @@ function Conversation({ membersOpen,toggleMembers,readReady,readMarker,canModera
       {emojis&&<div className="emoji-picker" role="group" aria-label="Emojis" onKeyDown={e=>{if(e.key==='Escape'){setEmojis(false);composer.current?.focus();}}}>{['😀','😂','🥰','😎','🤔','😢','😮','👍','👎','👏','🙌','❤️','🔥','🎉','🎮','👀','✅','🚀'].map(emoji=><button key={emoji} type="button" aria-label={'Inserir '+emoji} onClick={()=>{const node=composer.current;const displayStart=node?.selectionStart??mentionDisplay.text.length,displayEnd=node?.selectionEnd??displayStart;const start=mentionOffset(mentionDisplay,displayStart),end=mentionOffset(mentionDisplay,displayEnd,true);if(draft.length-(end-start)+emoji.length>4000)return;changeDraft(draft.slice(0,start)+emoji+draft.slice(end));setEmojis(false);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(displayStart+emoji.length,displayStart+emoji.length);});}}>{emoji}</button>)}</div>}
       <div className="composer-hint"><span>{pending ? 'Envio pendente: tente novamente para confirmar sem duplicar.' : 'Enter envia · Shift + Enter quebra a linha'}</span><span>{draft.length}/4000</span></div>
     </form>
-    {thread&&<ThreadPanel key={thread.id} root={messages.find(m=>m.id===thread.id)??thread} presence={presence} userId={userId} canModerate={canModerate} close={()=>setThread(undefined)}/>}
+    {thread&&<ThreadPanel visible={visible} targetId={inboxTarget?.threadRootId===thread.id?inboxTarget.id:undefined} key={thread.id} root={messages.find(m=>m.id===thread.id)??thread} presence={presence} userId={userId} canModerate={canModerate} close={()=>setThread(undefined)}/>}
   </section>;
 }
