@@ -10,5 +10,5 @@ const source=await readFile('src/main/update-key.ts','utf8');
 if(!source.includes(JSON.stringify(publicKey)))throw new Error('The signing key does not match the key embedded in this app.');
 const hash=createHash('sha256');for await(const chunk of createReadStream(target))hash.update(chunk);
 const manifest={version,file,sha256:hash.digest('hex'),size:(await stat(target)).size};
-await writeFile('release/discorda-update.json',JSON.stringify({...manifest,signature:sign(null,Buffer.from(JSON.stringify(manifest)),key).toString('base64')},null,2));
+await writeFile('release/discorda-update.json',JSON.stringify({...manifest,signature:sign(null,Buffer.from(JSON.stringify(manifest)),key).toString('base64'),compatibility:{protocolMin:1,protocolMax:1,signature:sign(null,Buffer.from(JSON.stringify({version,sha256:manifest.sha256,protocolMin:1,protocolMax:1})),key).toString('base64')}},null,2));
 console.log('Release manifest signed. Keep the private signing key off GitHub.');

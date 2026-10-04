@@ -14,30 +14,37 @@ namespace Discorda.Api.Media;
 public sealed record MediaLease(Guid Id, Guid UserId, Guid SessionId, Guid ChannelId, DateTimeOffset Until);
 public sealed record MediaCommand(Guid ChannelId, Guid? LeaseId);
 public sealed record VoiceMember(Guid ChannelId, Guid UserId, string Name, Guid LeaseId);
+public sealed class MediaAdmissionDeniedException : Exception;
 
 // A single-host admission registry. Restarting the API invalidates all existing leases.
 public sealed class MediaService(IConfiguration config, IServiceScopeFactory scopes, IHttpClientFactory clients, ILogger<MediaService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, MediaLease> leases = new();
     private readonly ConcurrentDictionary<Guid, (DateTimeOffset Until, Guid? Channel)> moderation = new();
+    private readonly object admission = new();
     public bool AdmissionAllowed(Guid user, Guid channel) => !moderation.TryGetValue(user, out var entry) || entry.Until <= DateTimeOffset.UtcNow || entry.Channel == channel;
     public async Task<bool> Moderate(Guid user, Guid? destination, CancellationToken ct)
     {
-        if (!leases.TryRemove(user, out var lease)) return false;
-        moderation[user] = (DateTimeOffset.UtcNow.AddSeconds(60), destination);
+        MediaLease lease;
+        lock (admission)
+        {
+            if (!leases.TryRemove(user, out lease!)) return false;
+            moderation[user] = (DateTimeOffset.UtcNow.AddSeconds(60), destination);
+        }
         try { await Rpc("RemoveParticipant", new { room = RoomName(lease.ChannelId), identity = lease.Id.ToString() }, new { room = RoomName(lease.ChannelId), roomAdmin = true }, ct); }
         catch (HttpRequestException) { /* Reconciliation retries removal; admission is already revoked. */ }
         return true;
     }
+    public HashSet<Guid> OccupiedChannels => leases.Values.Where(l => l.Until > DateTimeOffset.UtcNow).Select(l => l.ChannelId).ToHashSet();
     private VoiceMember[] roster = [];
-    public VoiceMember[] Roster => Volatile.Read(ref roster).Where(member => leases.TryGetValue(member.UserId, out var lease) && lease.ChannelId == member.ChannelId && lease.Until > DateTimeOffset.UtcNow).ToArray();
+    public VoiceMember[] Roster => Volatile.Read(ref roster).Where(member => leases.TryGetValue(member.UserId, out var lease) && lease.Id == member.LeaseId && lease.ChannelId == member.ChannelId && lease.Until > DateTimeOffset.UtcNow).ToArray();
     public bool Enabled => !string.IsNullOrEmpty(config["LiveKit:ApiSecret"]) && !string.IsNullOrEmpty(config["LiveKit:PublicUrl"]);
     public static string RoomName(Guid channel) => $"discorda-{channel:D}";
-    public string Token(string subject, string name, object grant)
+    public string Token(string subject, string name, object grant, Guid? userId = null)
     {
         var now = DateTimeOffset.UtcNow;
         var payload = new JwtPayload { ["iss"] = config["LiveKit:ApiKey"]!, ["sub"] = subject, ["name"] = name,
-            ["nbf"] = now.AddSeconds(-5).ToUnixTimeSeconds(), ["exp"] = now.AddSeconds(60).ToUnixTimeSeconds(), ["video"] = JsonSerializer.SerializeToElement(grant) };
+            ["nbf"] = now.AddSeconds(-5).ToUnixTimeSeconds(), ["exp"] = now.AddSeconds(60).ToUnixTimeSeconds(), ["metadata"] = userId.HasValue ? JsonSerializer.Serialize(new { userId }) : "", ["video"] = JsonSerializer.SerializeToElement(grant) };
         return new JwtSecurityTokenHandler().WriteToken(new JwtSecurityToken(new JwtHeader(new SigningCredentials(
             new SymmetricSecurityKey(Encoding.UTF8.GetBytes(config["LiveKit:ApiSecret"]!)), SecurityAlgorithms.HmacSha256)), payload));
     }
@@ -60,10 +67,26 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
         var room = RoomName(channel);
         await Rpc("CreateRoom", new { name = room, max_participants = 15, empty_timeout = 60 }, new { roomCreate = true }, ct);
         var lease = new MediaLease(Guid.NewGuid(), profile.Id, session, channel, DateTimeOffset.UtcNow.AddSeconds(45));
-        leases[profile.Id] = lease;
+        lock (admission)
+        {
+            // A moderator may have removed the member while CreateRoom was in flight.
+            if (!AdmissionAllowed(profile.Id, channel)) throw new MediaAdmissionDeniedException();
+            leases[profile.Id] = lease;
+        }
         return new { leaseId = lease.Id, url = config["LiveKit:PublicUrl"], token = Token(lease.Id.ToString(), profile.DisplayName,
             new { room, roomJoin = true, canPublish = true, canSubscribe = true, canPublishData = false,
-                canUpdateOwnMetadata = false, canPublishSources = new[] { "microphone", "camera", "screen_share", "screen_share_audio" } }) };
+                canUpdateOwnMetadata = false, canPublishSources = new[] { "microphone", "camera", "screen_share", "screen_share_audio" } }, profile.Id) };
+    }
+    public async Task<bool> Confirm(MemberProfile profile, Guid session, MediaCommand command, CancellationToken ct)
+    {
+        var lease = SpeakingLease(profile.Id, session, command.LeaseId ?? Guid.Empty);
+        if (lease is null || lease.ChannelId != command.ChannelId) return false;
+        var result = await Rpc("ListParticipants", new { room = RoomName(command.ChannelId) }, new { room = RoomName(command.ChannelId), roomAdmin = true }, ct);
+        if (!result.TryGetProperty("participants", out var participants) || !participants.EnumerateArray().Any(p => p.GetProperty("identity").GetString() == lease.Id.ToString())) return false;
+        VoiceMember[] before, after;
+        do { before = Volatile.Read(ref roster); after = before.Where(p => p.UserId != profile.Id).Append(new VoiceMember(command.ChannelId, profile.Id, profile.DisplayName, lease.Id)).ToArray(); }
+        while (Interlocked.CompareExchange(ref roster, after, before) != before);
+        return true;
     }
     public MediaLease? SpeakingLease(Guid user, Guid session, Guid id) => leases.TryGetValue(user, out var lease) && lease.Id == id && lease.SessionId == session && lease.Until > DateTimeOffset.UtcNow ? lease : null;
     public bool Pulse(Guid user, Guid session, MediaCommand command)
@@ -125,13 +148,30 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
                 await Rpc("RemoveParticipant", new { room = name, identity }, new { room = name, roomAdmin = true }, ct);
             }
         }
-        Volatile.Write(ref roster, connected.ToArray());
+        var next = connected.Concat(Roster.Where(m => !checkedIds.Contains(m.LeaseId))).DistinctBy(m => m.UserId).OrderBy(m => m.UserId).ToArray();
+        var previous = Volatile.Read(ref roster).OrderBy(m => m.UserId).ToArray();
+        Volatile.Write(ref roster, next);
+        using var rosterScope = scopes.CreateScope();
+        var live = rosterScope.ServiceProvider.GetRequiredService<LiveChat>();
+        if (!previous.SequenceEqual(next)) await live.Publish("voiceRoster", Roster);
+
     }
     protected override async Task ExecuteAsync(CancellationToken stoppingToken)
     {
         using var timer = new PeriodicTimer(TimeSpan.FromSeconds(3));
-        try { while (await timer.WaitForNextTickAsync(stoppingToken)) if (Enabled)
-            try { await Reconcile(stoppingToken); } catch (Exception error) when (!stoppingToken.IsCancellationRequested) { Volatile.Write(ref roster, []); logger.LogWarning("Media reconciliation unavailable ({ErrorType})", error.GetType().Name); }
+        try
+        {
+            while (await timer.WaitForNextTickAsync(stoppingToken))
+            {
+                if (Enabled) try { await Reconcile(stoppingToken); }
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested) { Volatile.Write(ref roster, []); logger.LogWarning("Media reconciliation unavailable ({ErrorType})", error.GetType().Name); }
+                try
+                {
+                    using var scope = scopes.CreateScope();
+                    await TemporaryRooms.Sweep(scope.ServiceProvider.GetRequiredService<DiscordaDbContext>(), this, scope.ServiceProvider.GetRequiredService<LiveChat>(), stoppingToken);
+                }
+                catch (Exception error) when (!stoppingToken.IsCancellationRequested) { logger.LogWarning("Temporary room cleanup unavailable ({ErrorType})", error.GetType().Name); }
+            }
         } catch (OperationCanceledException) when (stoppingToken.IsCancellationRequested) { }
     }
 }
@@ -146,18 +186,22 @@ public static class MediaEndpoints
             return await db.WorkspaceMembers.AnyAsync(m => m.UserId == user.Id && m.WorkspaceId == ChatEndpoints.GroupId, ct)
                 ? Results.Ok(media.Roster) : Results.Forbid();
         }).RequireAuthorization("Member");
-        app.MapPost("/api/v1/chat/media/{action}", async (string action, MediaCommand command, HttpContext ctx, DiscordaDbContext db, MediaService media, CancellationToken ct) =>
+        app.MapPost("/api/v1/chat/media/{action}", async (string action, MediaCommand command, HttpContext ctx, DiscordaDbContext db, MediaService media, LiveChat live, CancellationToken ct) =>
         {
             var user = (MemberProfile)ctx.Items[typeof(MemberProfile)]!;
             var session = Guid.Parse(ctx.User.FindFirst("session_id")!.Value);
-            if (action == "leave") { media.Leave(user.Id, session, command); return Results.Ok(new { }); }
+            if (action == "leave") { media.Leave(user.Id, session, command); await live.Publish("voiceRoster", media.Roster); return Results.Ok(new { }); }
+            await using var admissionTx = action == "join" ? await db.Database.BeginTransactionAsync(ct) : null;
+            if (admissionTx is not null) await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891321)", ct);
             if (!await db.Channels.AnyAsync(c => c.Id == command.ChannelId && c.Type == ChannelType.Voice && c.WorkspaceId == ChatEndpoints.GroupId && c.ArchivedAt == null
                 && db.WorkspaceMembers.Any(m => m.WorkspaceId == c.WorkspaceId && m.UserId == user.Id), ct)) return Results.NotFound();
             if (!media.Enabled) return Results.Problem(statusCode: 503, title: "Media server unavailable");
             if (!media.AdmissionAllowed(user.Id, command.ChannelId)) return Results.Forbid();
+            if (action == "ready") { try { if (!await media.Confirm(user, session, command, ct)) return Results.Conflict(); await live.Publish("voiceRoster", media.Roster); return Results.Ok(new { }); } catch (HttpRequestException) { return Results.StatusCode(503); } }
             if (action == "pulse") return media.Pulse(user.Id, session, command) ? Results.Ok(new { }) : Results.Conflict();
             if (action != "join") return Results.BadRequest();
             try { return Results.Ok(await media.Join(user, session, command.ChannelId, ct)); }
+            catch (MediaAdmissionDeniedException) { return Results.Forbid(); }
             catch (HttpRequestException) { return Results.Problem(statusCode: 503, title: "Media server unavailable"); }
         }).RequireAuthorization("Member");
     }

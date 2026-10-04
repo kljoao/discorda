@@ -20,7 +20,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       const allowedUsers=[{email:'admin@example.test',enabled:true}];
       const listeners = new Set<(event: import('../../src/shared/ipc/contracts').LiveEvent) => void>();
       window.addEventListener('test-live', event => listeners.forEach(listener => listener((event as CustomEvent).detail)));
-      window.discorda = {
+      window.discorda = {onPowerState:()=>()=>{},
         servers:async action=>({servers:[{id:'a'.repeat(64),name:'Grupo de teste',address:'https://grupo.example.test',current:true}],...(action.kind==='invite'?{invite:'discorda://join?server=https%3A%2F%2Fgrupo.example.test'}:{})}),onInvite:()=>()=>{},
         shortcuts:async()=>{},onShortcut:()=>()=>{},
         admin:async action=>{if(action.kind==='setup')return {ok:true,data:null};if(action.kind==='operations')return {ok:true,data:{checkedAt:new Date().toISOString(),api:'online',database:'ready',media:'online',activeCalls:0,process:{memoryBytes:1024,cpuAveragePercent:1,uptimeSeconds:60},storage:{databaseBytes:1024,freeBytes:2048,totalBytes:4096},backup:null}};if(action.kind==='settings')return {ok:true,data:{adminEmail:'admin@example.test'}};if(action.kind==='users')return {ok:true,data:allowedUsers};if(action.kind==='network')return {ok:true,data:[]};if(action.kind==='user'){allowedUsers.push({email:action.email,enabled:action.enabled});return {ok:true,data:null};}return {ok:true,data:null};},notifyMessage:async()=>{},
@@ -46,11 +46,11 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
           if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: workspaceName, role: 'Owner',isAdmin:true, userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
           if (action.kind === 'voiceRoster') return {ok:true,data:[{channelId:'bde069ed-d1c4-4930-92d3-9360eab43cb8',userId:'friend',name:'Amigo na voz'}]};
           if (action.kind === 'profile') {displayName=action.displayName;return {ok:true,data:{id:'test-user',displayName,email:'test@example.test'}};}
-          if (action.kind === 'history') { const items = messages.filter(m => m.channelId === action.channelId && (!action.before || BigInt(m.id) < BigInt(action.before))); return {ok: true, data: {items: items.slice(-50), hasMore: items.length > 50}}; }
+          if (action.kind === 'history') { const items = messages.filter(m => m.channelId === action.channelId && (m.threadRootId??undefined)===action.thread && (!action.before || BigInt(m.id) < BigInt(action.before))); return {ok: true, data: {items: items.slice(-50), hasMore: items.length > 50}}; }
           if (action.kind === 'channel') { const channel = {id: crypto.randomUUID(), name: action.name}; channels.push(channel); return {ok: true, data: channel}; }
           if (action.kind === 'send') {
             let message = messages.find(m => m.clientId === action.clientId);
-            if (!message) { message = {id: String(messages.length + 1), authorId: 'test-user', authorName: 'Pessoa de teste', channelId: action.channelId, clientId: action.clientId, body: action.body, replyToId: action.replyToId ?? null, version: 1, createdAt: new Date().toISOString(), editedAt: null, deletedAt: null}; messages.push(message); }
+            if (!message) { message = {id: String(messages.length + 1), authorId: 'test-user', authorName: 'Pessoa de teste', channelId: action.channelId, clientId: action.clientId, body: action.body, threadRootId:action.threadRootId, replyToId: action.replyToId ?? null, version: 1, createdAt: new Date().toISOString(), editedAt: null, deletedAt: null}; messages.push(message); }
             if (dropResponse) { dropResponse = false; return {ok: false, message: 'Resposta perdida. Tente novamente.'}; }
             return {ok: true, data: message};
           }
@@ -116,17 +116,22 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('dialog',{name:'Configurações',exact:true})).toBeVisible();
     await expect(page.getByRole('button',{name:'Instalar e reiniciar'})).toBeVisible();
     await expect(page.getByRole('dialog').getByText('Versão instalada: test',{exact:true}).first()).toBeVisible();
-    await page.getByRole('button',{name:'Voz e microfone',exact:true}).click();
+    await page.getByRole('tab',{name:'Voz e microfone',exact:true}).click();
     await expect(page.getByLabel('Volume de entrada',{exact:true})).toBeVisible();
     await page.screenshot({path:'test-results/settings-redesign.png',fullPage:true,animations:'disabled'});
-    await page.getByRole('button',{name:'Conexão e diagnóstico',exact:true}).click();
+    await page.getByRole('tab',{name:'Conexão e diagnóstico',exact:true}).click();
     await expect(page.getByRole('button',{name:'Exportar diagnóstico'})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Testar minha chamada'})).toBeVisible();
+    await page.getByRole('tab',{name:'Conexão e diagnóstico'}).press('Home');
+    await expect(page.getByRole('tab',{name:'Minha conta'})).toBeFocused();
+    await page.keyboard.press('End');
+    await expect(page.getByRole('tab',{name:'Conexão e diagnóstico'})).toBeFocused();
     await page.screenshot({path:'test-results/diagnostics.png',fullPage:true,animations:'disabled'});
     await page.keyboard.press('Escape');
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.chat-account')).toHaveCount(0);
     await page.getByRole('button',{name:'Ajustar microfone',exact:true}).click();
-    await page.getByRole('button',{name:'Minha conta',exact:true}).click();
+    await page.getByRole('tab',{name:'Minha conta',exact:true}).click();
     await page.getByRole('button',{name:'Editar nome',exact:true}).click();
     await page.getByRole('textbox',{name:'Nome no Discorda'}).fill('Meu apelido');
     await page.getByRole('button',{name:'Salvar nome'}).click();
@@ -271,14 +276,14 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('button',{name:'Ajustar microfone',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Configurações',exact:true})).toBeVisible();
     expect(await page.locator('.settings-dialog').evaluate(el=>getComputedStyle(el).animationName)).toBe('none');
-    await page.getByRole('button',{name:'Acessibilidade',exact:true}).click();
+    await page.getByRole('tab',{name:'Acessibilidade',exact:true}).click();
     await page.getByRole('combobox',{name:'Tamanho do texto',exact:true}).selectOption('150');
     await page.getByLabel('Alto contraste',{exact:true}).check();
     await expect(page.locator('html')).toHaveAttribute('data-font','150');
     await expect(page.locator('html')).toHaveAttribute('data-contrast','true');
     await page.screenshot({path:'test-results/community-accessibility.png',fullPage:true});
     await page.getByRole('button',{name:'Restaurar aparência padrão',exact:true}).click();
-    await page.getByRole('button',{name:'Voz e microfone',exact:true}).click();
+    await page.getByRole('tab',{name:'Voz e microfone',exact:true}).click();
 
     for(const [name,message] of [
       ['NotAllowedError','acesso para aplicativos da área de trabalho'],
@@ -295,8 +300,10 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     }
     await page.keyboard.press('Escape');
     await expect(page.getByRole('button',{name:'Ajustar microfone',exact:true})).toBeFocused();
+    await page.evaluate(()=>{const original=AudioContext.prototype.createOscillator;(window as any).mentionTones=0;AudioContext.prototype.createOscillator=function(){(window as any).mentionTones++;return original.call(this);};});
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'message',data:{id:'900001',version:1,channelId:'225a47d7-779e-4992-89d2-03b1517f9112',authorId:'other-user',authorName:'Outra pessoa',body:'Resposta para você',replyAuthorId:'test-user',replyToId:'1',clientId:'test-reply',createdAt:new Date().toISOString(),editedAt:null,deletedAt:null}}})));
     await expect(page.locator('#message-900001')).toHaveClass(/is-reply-to-me/);
+    await expect.poll(()=>page.evaluate(()=>(window as any).mentionTones)).toBe(2);
     await expect(page.getByRole('button',{name:'Ir para a primeira',exact:true})).toBeVisible();
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'presence',data:[{id:'11111111-1111-4111-8111-111111111111',name:'Ana Silva',status:'online',typingChannelId:null,avatarUrl:null},{id:'22222222-2222-4222-8222-222222222222',name:'André',status:'offline',typingChannelId:null,avatarUrl:null}]}})));
     await composer.fill('Olá @an');
@@ -311,6 +318,23 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('article').last().locator('.message-actions')).toHaveCSS('opacity','0');
     await page.getByRole('article').last().hover();
     await expect(page.getByRole('article').last().locator('.message-actions')).toHaveCSS('opacity','1');
+    const topicRoot=page.locator('.chat-message').filter({hasText:'Olá @André tudo bem?'});
+    await topicRoot.hover();await topicRoot.getByRole('button',{name:'Abrir tópico'}).click();
+    const thread=page.getByRole('complementary',{name:'Tópico'});
+    await thread.getByRole('textbox',{name:'Resposta no tópico'}).fill('Resposta organizada');
+    await thread.getByRole('textbox',{name:'Resposta no tópico'}).press('Enter');
+    await expect(thread.getByText('Resposta organizada',{exact:true})).toBeVisible();
+    await expect(page.locator('.message-list').getByText('Resposta organizada',{exact:true})).toHaveCount(0);
+    await expect(thread.getByRole('textbox',{name:'Resposta no tópico'})).toBeFocused();
+    await page.screenshot({path:'test-results/thread-panel.png',fullPage:true});
+    await thread.getByRole('button',{name:'Fechar tópico'}).click();
+    await page.getByRole('button',{name:'Ajustar microfone',exact:true}).click();
+    await page.getByRole('tab',{name:'Conexão e diagnóstico',exact:true}).click();
+    await page.getByRole('button',{name:'Compartilhar diagnóstico',exact:true}).click();
+    await expect(page.getByText('Revise antes de compartilhar',{exact:true})).toBeVisible();
+    await page.getByRole('button',{name:'Enviar resumo ao canal',exact:true}).click();
+    await expect(page.getByText('Resumo enviado',{exact:true})).toBeVisible();
+    await page.keyboard.press('Escape');
     await page.evaluate(()=>window.dispatchEvent(new Event('test-seed')));
     await expect(page.locator('.chat-message')).toHaveCount(500);
     await page.getByRole('button',{name:'Carregar anteriores',exact:true}).click();

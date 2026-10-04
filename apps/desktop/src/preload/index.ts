@@ -2,10 +2,11 @@ import { contextBridge, ipcRenderer } from 'electron';
 import { IPC, type DesktopApi } from '../shared/ipc/contracts';
 
 const api: DesktopApi = {
+  onPowerState:listener=>{const receive=(_event:Electron.IpcRendererEvent,state:'suspend'|'resume')=>listener(state);ipcRenderer.on(IPC.powerState,receive);return()=>ipcRenderer.removeListener(IPC.powerState,receive);},
   servers:action=>ipcRenderer.invoke(IPC.servers,action),
   onInvite:listener=>{const receive=()=>listener();ipcRenderer.on(IPC.inviteEvent,receive);return()=>ipcRenderer.removeListener(IPC.inviteEvent,receive);},
   shortcuts:settings=>ipcRenderer.invoke(IPC.shortcuts,settings),
-  onShortcut:listener=>{const receive=(_event:Electron.IpcRendererEvent,value:'mute'|'unavailable'|boolean)=>listener(value);ipcRenderer.on(IPC.shortcutEvent,receive);return()=>ipcRenderer.removeListener(IPC.shortcutEvent,receive);},
+  onShortcut:listener=>{const receive=(_event:Electron.IpcRendererEvent,value:'mute'|'deafen'|'cinema'|'unavailable'|boolean)=>listener(value);ipcRenderer.on(IPC.shortcutEvent,receive);return()=>ipcRenderer.removeListener(IPC.shortcutEvent,receive);},
   admin:action=>ipcRenderer.invoke(IPC.admin,action),
   notifyMessage:channelId=>ipcRenderer.invoke(IPC.notifyMessage,channelId),
   reconnectLive:()=>ipcRenderer.invoke(IPC.reconnectLive),

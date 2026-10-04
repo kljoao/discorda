@@ -14,6 +14,22 @@ namespace Discorda.IntegrationTests;
 
 public sealed class LiveChatTests(AuthFixture fixture) : IClassFixture<AuthFixture>
 {
+    [Fact]
+    public async Task PersistentConnectionsHaveAtomicPerMemberAndGlobalCaps()
+    {
+        await using var app = fixture.App();
+        var live = app.Services.GetRequiredService<LiveChat>();
+        var now = DateTimeOffset.UtcNow;
+        var user = Guid.NewGuid();
+        LivePeer Peer(Guid id) => new(Guid.NewGuid().ToString(), id, Guid.NewGuid(), "Synthetic", now.AddMinutes(5), now, false, null, now, () => {});
+        var attempts = await Task.WhenAll(Enumerable.Range(0, 20).Select(_ => Task.Run(() => live.Add(Peer(user)))));
+        Assert.Equal(4, attempts.Count(accepted => accepted));
+        var other = Enumerable.Range(0,124).Select(_ => Peer(Guid.NewGuid())).ToArray();
+        Assert.All(other, peer => Assert.True(live.Add(peer)));
+        Assert.False(live.Add(Peer(Guid.NewGuid())));
+        live.Remove(other[0].ConnectionId);
+        Assert.True(live.Add(Peer(Guid.NewGuid())));
+    }
     private static readonly Guid General = Guid.Parse("225a47d7-779e-4992-89d2-03b1517f9112");
     [Fact]
     public async Task AuthorizedClientsReceiveCommittedMessagesTypingAndRevocationDisconnects()

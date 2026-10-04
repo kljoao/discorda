@@ -4,6 +4,7 @@ $root = Split-Path $PSScriptRoot -Parent
 $compose = Join-Path $root 'infra/compose/selfhost.yml'
 $environmentFile = Join-Path $root '.discorda/selfhost/compose.env'
 if (!(Test-Path -LiteralPath $environmentFile)) { throw 'Execute tools/setup-selfhost.ps1 primeiro.' }
+& (Join-Path $PSScriptRoot 'harden-database.ps1')
 docker compose --env-file $environmentFile -f $compose up -d --build
 if ($LASTEXITCODE -ne 0) { throw 'Não foi possível iniciar o servidor. Consulte docker compose logs (instruções no README).' }
 $ready = $false

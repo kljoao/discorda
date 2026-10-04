@@ -19,7 +19,16 @@ public sealed class LiveChat(IHubContext<ChatHub> hub, IServiceScopeFactory scop
         await SendPresence();
         await Publish("profile", new { userId = user, displayName = name });
     }
-    public void Add(LivePeer peer) => peers[peer.ConnectionId] = peer;
+    private readonly object admission = new();
+    public bool Add(LivePeer peer)
+    {
+        lock (admission)
+        {
+            // HTTP limits do not bound persistent connections; enforce admission separately.
+            if (peers.Count >= 128 || peers.Values.Count(x => x.UserId == peer.UserId) >= 4) return false;
+            return peers.TryAdd(peer.ConnectionId, peer);
+        }
+    }
     public void Remove(string id) => peers.TryRemove(id, out _);
     public void Pulse(string id, Guid? channel, bool typing, bool away)
     {
@@ -102,8 +111,9 @@ public sealed class ChatHub(LiveChat live, DiscordaDbContext db, TimeProvider cl
             !await db.WorkspaceMembers.AnyAsync(x => x.UserId == profile.Id && x.WorkspaceId == ChatEndpoints.GroupId, Context.ConnectionAborted))
         { Context.Abort(); return; }
         var context = Context;
-        live.Add(new LivePeer(Context.ConnectionId, profile.Id, session, profile.DisplayName, DateTimeOffset.FromUnixTimeSeconds(expiry),
-            clock.GetUtcNow(), false, null, DateTimeOffset.MinValue, context.Abort, profile.AvatarUrl));
+        if (!live.Add(new LivePeer(Context.ConnectionId, profile.Id, session, profile.DisplayName, DateTimeOffset.FromUnixTimeSeconds(expiry),
+            clock.GetUtcNow(), false, null, DateTimeOffset.MinValue, context.Abort, profile.AvatarUrl)))
+        { Context.Abort(); return; }
         await live.SendPresence();
         await base.OnConnectedAsync();
     }

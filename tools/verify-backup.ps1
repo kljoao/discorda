@@ -9,7 +9,7 @@ function Docker([string[]]$Arguments){$old=$ErrorActionPreference;try{$ErrorActi
 try {
  # Disposable database: no network, published ports, host mounts or production volumes.
  # Trust is confined to this networkless test container. Restore only your own backups.
- Docker @('run','--detach','--name',$container,'--network','none','--memory','768m','--cpus','1','--label','discorda.restore-test=true','-e','POSTGRES_HOST_AUTH_METHOD=trust','postgres:17.9-alpine')|Out-Null
+ Docker @('run','--detach','--name',$container,'--network','none','--memory','768m','--cpus','1','--label','discorda.restore-test=true','-e','POSTGRES_HOST_AUTH_METHOD=trust','postgres:17.11-alpine3.23')|Out-Null
  $ready=$false
  for($i=0;$i -lt 45;$i++){try{Docker @('exec',$container,'pg_isready','-U','postgres')|Out-Null;$ready=$true;break}catch{Start-Sleep -Seconds 1}}
  if(!$ready){throw 'Banco de teste não iniciou.'}

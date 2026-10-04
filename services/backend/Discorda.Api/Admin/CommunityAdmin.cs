@@ -43,8 +43,9 @@ public static class CommunityAdmin
             deadline.CancelAfter(TimeSpan.FromSeconds(8));
             var ct = deadline.Token;
             var mediaStatus = media.Healthy(ct);
-            bool database=false;long? databaseBytes=null;
+            bool database=false;long? databaseBytes=null;string? databaseVersion=null;
             try {database=await db.Database.CanConnectAsync(ct);if(database)databaseBytes=await db.Database.SqlQueryRaw<long>("SELECT pg_database_size(current_database()) AS \"Value\"").SingleAsync(ct);}catch(Exception) when(!requestCt.IsCancellationRequested) { /* Return status, never credentials or database errors. */ }
+            if(database)try{databaseVersion=await db.Database.SqlQueryRaw<string>("SELECT current_setting('server_version') AS \"Value\"").SingleAsync(ct);}catch(Exception) when(!requestCt.IsCancellationRequested){}
             using var process=Process.GetCurrentProcess();var uptime=Math.Max(1,(DateTime.UtcNow-process.StartTime.ToUniversalTime()).TotalSeconds);
             long? freeBytes=null,totalBytes=null;
             try{var disk=new DriveInfo(Path.GetFullPath(config["SelfHost:StateDirectory"]??".discorda"));freeBytes=disk.AvailableFreeSpace;totalBytes=disk.TotalSize;}catch { }
@@ -58,6 +59,7 @@ public static class CommunityAdmin
                 }
             }catch(Exception) when(!requestCt.IsCancellationRequested) { }
             return (object)new {checkedAt=DateTimeOffset.UtcNow,api="online",database=database?"ready":"unavailable",media=await mediaStatus?"online":"unavailable",activeCalls=media.Roster.Length,
+                versions=new {api=typeof(CommunityAdmin).Assembly.GetName().Version?.ToString(),runtime=Environment.Version.ToString(),database=databaseVersion,protocol=1},
                 process=new {memoryBytes=process.WorkingSet64,cpuAveragePercent=Math.Round(process.TotalProcessorTime.TotalSeconds/uptime/Environment.ProcessorCount*100,1),uptimeSeconds=(long)uptime},storage=new {databaseBytes,freeBytes,totalBytes},backup};
         }, requestCt))).RequireRateLimiting("admin-writes");
     }

@@ -4,18 +4,19 @@ import {createRoot} from 'react-dom/client';
 import {Room,RoomEvent,Track,LocalVideoTrack,type LocalTrackPublication,type RemoteParticipant} from 'livekit-client';
 import {Voice} from '../../src/renderer/features/chat/Voice';
 import '../../src/renderer/styles.css';
+import '../../src/renderer/features.css';
 import '../../src/renderer/refinements.css';
 import '../../src/renderer/community.css';
 import '../../src/renderer/server-navigation.css';
 import '../../src/renderer/conversation-layout.css';
 
 // Test-only transport simulation with real MediaStreamTracks and RTCRtpSender replacement.
-let selected='screen:1',starts=0,stops=0,old:MediaStreamTrack|undefined,currentRoom:Room;
+let selected='screen:1',starts=0,stops=0,joins=0,old:MediaStreamTrack|undefined,currentRoom:Room;
 const peers:RTCPeerConnection[]=[];
 function capture(){const canvas=document.createElement('canvas');canvas.width=640;canvas.height=360;const ctx=canvas.getContext('2d')!;ctx.fillStyle=selected==='screen:1'?'#3a405a':'#635279';ctx.fillRect(0,0,640,360);ctx.fillStyle='white';ctx.font='28px sans-serif';ctx.fillText(selected,60,150);return canvas.captureStream(10);}
 navigator.mediaDevices.getDisplayMedia=async()=>capture();
 Room.prototype.connect=async function(){
- currentRoom=this;
+ currentRoom=this;joins++;
  this.localParticipant.identity='self';this.localParticipant.name='Você';
  for(const [i,name] of ['Ana','Bruno','Carla','Diego'].entries())this.remoteParticipants.set('lease-'+i,{identity:'lease-'+i,name,isLocal:false,isSpeaking:i===1,isMicrophoneEnabled:i!==2,connectionQuality:'excellent',trackPublications:new Map(),videoTrackPublications:new Map(),audioTrackPublications:new Map(),getTrackPublication:()=>undefined} as unknown as RemoteParticipant);
  this.localParticipant.publishTrack=async track=>{
@@ -36,6 +37,7 @@ Room.prototype.startAudio=async()=>{};
 Room.prototype.disconnect=async()=>{peers.forEach(pc=>pc.close());};
 const names=['Ana','Bruno','Carla','Diego'];
 window.discorda={
+ onPowerState:(listener:(state:'suspend'|'resume')=>void)=>{const receive=(event:Event)=>listener((event as CustomEvent).detail);window.addEventListener('fixture-power',receive);return()=>window.removeEventListener('fixture-power',receive);},
  chat:async()=>({ok:true,data:names.map((name,i)=>({channelId:'voice',userId:'user-'+i,leaseId:'lease-'+i,name}))}),
  media:async()=>({ok:true,data:{url:'wss://fixture.invalid',token:'fixture',leaseId:'self'}}),
  onLiveEvent:()=>()=>{},onShortcut:()=>()=>{},shortcuts:async()=>{},voiceActivity:async()=>{},
@@ -43,7 +45,7 @@ window.discorda={
  audioStatus:async()=>({supported:true,os:'test'}),captureSources:async()=>['screen:1','screen:2'].map(id=>({id,name:id,thumbnail:'/resources/icon.png',kind:'screen'})),
  selectCapture:async (id:string)=>{selected=id;},applicationAudio:async()=>{},onApplicationAudio:()=>()=>{},onApplicationAudioEnd:()=>()=>{},
 } as unknown as NonNullable<Window['discorda']>;
-Object.assign(window,{voiceSnapshot:()=>({starts,stops,old:old?.readyState,current:currentRoom?.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack.readyState,audio:currentRoom?.localParticipant.audioTrackPublications.size})});
+Object.assign(window,{addFixtureStreams:()=>{for(const peer of [...currentRoom.remoteParticipants.values()].slice(0,2)){const track=new LocalVideoTrack(capture().getVideoTracks()[0],undefined,false);track.source=Track.Source.ScreenShare;peer.videoTrackPublications.set('screen',{track,source:Track.Source.ScreenShare,isMuted:false} as any);}currentRoom.emit(RoomEvent.ActiveSpeakersChanged,[]);},voiceSnapshot:()=>({joins,starts,stops,old:old?.readyState,current:currentRoom?.localParticipant.getTrackPublication(Track.Source.ScreenShare)?.track?.mediaStreamTrack.readyState,audio:currentRoom?.localParticipant.audioTrackPublications.size})});
 function Fixture(){
  const [open,setOpen]=useState(false),[mediaHost,setMediaHost]=useState<HTMLDivElement|null>(null),[dockHost,setDockHost]=useState<HTMLDivElement|null>(null);
  return <div className="chat-shell members-collapsed"><nav className="server-rail">D</nav><aside className="chat-sidebar"><h2>Grupo de teste</h2><button onClick={()=>setOpen(false)}>geral</button><div className="sidebar-scroll"><Voice channels={[{id:'voice',name:'Conversa'}]} userId="self" self={{id:'self',name:'Você',status:'online',typingChannelId:null,avatarUrl:'/resources/icon.png'}} presence={names.map((name,i)=>({id:'user-'+i,name,status:'online',typingChannelId:null,avatarUrl:'/resources/icon.png'}))} mediaHost={mediaHost} dockHost={dockHost} open={open} setOpen={setOpen} account={<p>Minha conta</p>}/></div><div ref={setDockHost} className="sidebar-footer"/></aside><main className="chat-main"><div ref={setMediaHost} className="call-stage" hidden={!open}/><div hidden={open}>Chat de texto</div></main></div>;

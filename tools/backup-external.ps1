@@ -17,15 +17,22 @@ $acl=New-Object Security.AccessControl.DirectorySecurity;$acl.SetAccessRuleProte
 foreach($sid in @([Security.Principal.WindowsIdentity]::GetCurrent().User,(New-Object Security.Principal.SecurityIdentifier 'S-1-5-18'))){$acl.AddAccessRule((New-Object Security.AccessControl.FileSystemAccessRule($sid,'FullControl','ContainerInherit,ObjectInherit','None','Allow')))}
 Set-Acl -LiteralPath $folder -AclObject $acl
 $servicePath=Join-Path $folder 'temporary-service.conf'
-$service="[discorda]`nhost="+$connection.get_Item('Host')+"`nport="+$connection.get_Item('Port')+"`ndbname="+$connection.get_Item('Database')+"`nuser="+$connection.get_Item('Username')+"`npassword="+$connection.get_Item('Password')+"`nsslmode=require`nconnect_timeout=15`n"
+$rootCertificate=$null
+if($connection.ContainsKey('Root Certificate')){
+ $rootCertificate=[string]$connection.get_Item('Root Certificate')
+ if(!(Test-Path -LiteralPath $rootCertificate -PathType Leaf)){throw 'Certificado raiz do banco não encontrado. Backup recusado.'}
+}
+$containerCa=if($rootCertificate){'/tmp/database-root.crt'}else{'/etc/ssl/certs/ca-certificates.crt'}
+$service="[discorda]`nhost="+$connection.get_Item('Host')+"`nport="+$connection.get_Item('Port')+"`ndbname="+$connection.get_Item('Database')+"`nuser="+$connection.get_Item('Username')+"`npassword="+$connection.get_Item('Password')+"`nsslmode=verify-full`nsslrootcert=$containerCa`nconnect_timeout=15`n"
 foreach($field in @('Host','Port','Database','Username','Password')){if(([string]$connection.get_Item($field)) -match '[\r\n]'){throw 'A configuração contém um valor inválido para o serviço de backup.'}}
 $container='discorda-external-backup-'+[Guid]::NewGuid().ToString('N')
 function Docker([string[]]$Arguments){$old=$ErrorActionPreference;try{$ErrorActionPreference='Continue';$result=& docker.exe @Arguments 2>&1;$code=$LASTEXITCODE}finally{$ErrorActionPreference=$old};if($code -ne 0){throw 'Backup externo falhou. Verifique conectividade, versão do PostgreSQL e permissões da conta de manutenção.'};return $result}
 $created=$false
 try{
  [IO.File]::WriteAllText($servicePath,$service,(New-Object Text.UTF8Encoding($false)))
- Docker @('create','--name',$container,'--memory','512m','--cpus','1','--entrypoint','sleep','postgres:17.9-alpine','infinity')|Out-Null;$created=$true
+ Docker @('create','--name',$container,'--memory','512m','--cpus','1','--entrypoint','sleep','postgres:17.11-alpine3.23','infinity')|Out-Null;$created=$true
  Docker @('start',$container)|Out-Null
+ if($rootCertificate){Docker @('cp',$rootCertificate,($container+':/tmp/database-root.crt'))|Out-Null}
  Docker @('cp',$servicePath,($container+':/tmp/service.conf'))|Out-Null
  Docker @('exec',$container,'chmod','600','/tmp/service.conf')|Out-Null
  Docker @('exec','-e','PGSERVICEFILE=/tmp/service.conf',$container,'pg_dump','--dbname=service=discorda','--schema=discorda','--no-owner','--no-privileges','-Fc','-f','/tmp/database.dump')|Out-Null

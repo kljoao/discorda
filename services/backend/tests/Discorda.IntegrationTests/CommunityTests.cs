@@ -1,3 +1,5 @@
+using Microsoft.Extensions.DependencyInjection;
+using Discorda.Api.Media;
 using System.Net;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
@@ -13,6 +15,103 @@ namespace Discorda.IntegrationTests;
 
 public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixture>
 {
+    [Fact]
+    public async Task AttachmentLimitsAndThreadRootChannelAreEnforced()
+    {
+        await using var app = fixture.App(); var member = await Member(app); using var client = member.Client;
+        var route = Tools + "/attachments";
+        var file = await client.PostAsJsonAsync(route, new { clientId = Guid.NewGuid(), name = "large.txt", content = Convert.ToBase64String(new byte[100000]) });
+        file.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync(route, new { clientId = Guid.NewGuid(), name = "too-large.txt", content = Convert.ToBase64String(new byte[Attachments.MaxBytes + 1]) })).StatusCode);
+        await using var db = fixture.Database();
+        var another = new Discorda.Core.Channels.Channel { WorkspaceId = ChatEndpoints.GroupId, Name = "Other channel", Type = Discorda.Core.Channels.ChannelType.Text };
+        db.Channels.Add(another); await db.SaveChangesAsync();
+        var parent = new Discorda.Core.Channels.Message { ChannelId = another.Id, AuthorId = member.Id, ClientId = Guid.NewGuid(), Body = "Other root" };
+        db.Messages.Add(parent); await db.SaveChangesAsync();
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync(Messages, new { clientId = Guid.NewGuid(), body = "Wrong channel", threadRootId = parent.Id })).StatusCode);
+    }
+    [Fact]
+    public async Task ThreadRepliesAreScopedPaginatedAndDoNotPolluteMainHistory()
+    {
+        await using var app = fixture.App(); var member = await Member(app); using var client = member.Client;
+        var root = await (await client.PostAsJsonAsync(Messages, new { clientId = Guid.NewGuid(), body = "Thread root" })).Content.ReadFromJsonAsync<JsonElement>();
+        var rootId = root.GetProperty("id").GetString(); var retryId = Guid.NewGuid();
+        var payload = new { clientId = retryId, body = "Thread answer", threadRootId = rootId };
+        var response = await client.PostAsJsonAsync(Messages, payload); response.EnsureSuccessStatusCode();
+        var reply = await response.Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(member.Id, reply.GetProperty("replyAuthorId").GetGuid());
+        Assert.Equal(rootId, reply.GetProperty("threadRootId").GetString());
+        var retry = await (await client.PostAsJsonAsync(Messages, payload)).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(reply.GetProperty("id").GetString(), retry.GetProperty("id").GetString());
+        var main = await client.GetFromJsonAsync<JsonElement>(Messages);
+        Assert.DoesNotContain(main.GetProperty("items").EnumerateArray(), m => m.GetProperty("id").GetString() == reply.GetProperty("id").GetString());
+        Assert.Equal(1, main.GetProperty("items").EnumerateArray().Single(m => m.GetProperty("id").GetString() == rootId).GetProperty("threadReplyCount").GetInt32());
+        var thread = await client.GetFromJsonAsync<JsonElement>(Messages + "?thread=" + rootId);
+        Assert.Single(thread.GetProperty("items").EnumerateArray());
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync(Messages, new { clientId = Guid.NewGuid(), body = "nested", threadRootId = reply.GetProperty("id").GetString() })).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync(Messages, new { clientId = retryId, body = "same id different topic" })).StatusCode);
+    }
+    [Fact]
+    public async Task AttachmentsRequireAccessAndDeletionRevokesDownload()
+    {
+        await using var app = fixture.App(); var owner = await Member(app); var other = await Member(app);
+        using var client = owner.Client; using var another = other.Client;
+        var route = Tools + "/attachments";
+        var payload = new { clientId = Guid.NewGuid(), name = "example.txt", content = Convert.ToBase64String("hello"u8.ToArray()) };
+        var response = await client.PostAsJsonAsync(route, payload); response.EnsureSuccessStatusCode();
+        var message = await response.Content.ReadFromJsonAsync<JsonElement>();
+        var fileId = message.GetProperty("attachments")[0].GetProperty("id").GetString();
+        Assert.Equal(5, message.GetProperty("attachments")[0].GetProperty("size").GetInt32());
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync(route, new { payload.clientId, name = "changed.txt", content = payload.content })).StatusCode);
+        var retry = await (await client.PostAsJsonAsync(route, payload)).Content.ReadFromJsonAsync<JsonElement>();
+        Assert.Equal(message.GetProperty("id").GetString(), retry.GetProperty("id").GetString());
+        Assert.Equal("aGVsbG8=", (await another.GetFromJsonAsync<JsonElement>(route + "/" + fileId)).GetProperty("content").GetString());
+        Assert.Equal(HttpStatusCode.NotFound, (await another.GetAsync($"/api/v1/chat/channels/{Guid.NewGuid()}/attachments/{fileId}")).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync(route, new { clientId = Guid.NewGuid(), name = "../evil", content = "aGVsbG8=" })).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest, (await client.PostAsJsonAsync(route, new { clientId = Guid.NewGuid(), name = "file", content = "invalid!" })).StatusCode);
+        var removed = await client.DeleteAsync(Messages + "/" + message.GetProperty("id").GetString() + "?version=1"); removed.EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.NotFound, (await another.GetAsync(route + "/" + fileId)).StatusCode);
+        await using var db = fixture.Database(); Assert.False(await db.MessageAttachments.AnyAsync(a => a.Id == Guid.Parse(fileId!)));
+    }
+    [Fact]
+    public async Task TemporaryRoomsLimitPerCreatorAndExpireWhenEmpty()
+    {
+        await using var app = fixture.App(); var member = await Member(app); using var client = member.Client;
+        const string route = "/api/v1/chat/temporary-rooms";
+        var first = await client.PostAsJsonAsync(route, new { name = "Test room" }); first.EnsureSuccessStatusCode();
+        var id = (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        (await client.PostAsJsonAsync(route, new { name = "Second room" })).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync(route, new { name = "Third room" })).StatusCode);
+        await using var db = fixture.Database();
+        await db.Channels.Where(c => c.Id == id).ExecuteUpdateAsync(s => s.SetProperty(c => c.EmptySince, DateTimeOffset.UtcNow.AddMinutes(-3)));
+        await TemporaryRooms.Sweep(db, app.Services.GetRequiredService<MediaService>(), app.Services.GetRequiredService<LiveChat>(), CancellationToken.None);
+        Assert.NotNull((await db.Channels.AsNoTracking().SingleAsync(c => c.Id == id)).ArchivedAt);
+        (await client.PostAsJsonAsync(route, new { name = "Replacement" })).EnsureSuccessStatusCode();
+    }
+    [Fact]
+    public async Task QueuedRoleMutationRechecksAuthorityAfterConcurrentDemotion()
+    {
+        await using var app = fixture.App();
+        var actor = await Member(app); var target = await Member(app);
+        using var client = actor.Client; using var targetClient = target.Client;
+        await using var db = fixture.Database();
+        await db.WorkspaceMembers.Where(m => m.UserId == actor.Id).ExecuteUpdateAsync(s => s.SetProperty(m => m.Role, Discorda.Core.Workspaces.MemberRole.Admin));
+        await using var tx = await db.Database.BeginTransactionAsync();
+        await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891322)");
+        var pending = client.PutAsJsonAsync($"/api/v1/chat/management/members/{target.Id}/role", new {role="Moderator"});
+        var waiting = false;
+        for (var i=0; i<100 && !waiting; i++)
+        {
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_stat_clear_snapshot()");
+            waiting = await db.Database.SqlQueryRaw<int>("SELECT 1 AS \"Value\" FROM pg_stat_activity WHERE wait_event = 'advisory' AND query LIKE '%74891322%'").AnyAsync();
+            if (!waiting) await Task.Delay(20);
+        }
+        Assert.True(waiting, "Mutation must wait before making its authorization decision");
+        await db.WorkspaceMembers.Where(m => m.UserId == actor.Id).ExecuteUpdateAsync(s => s.SetProperty(m => m.Role, Discorda.Core.Workspaces.MemberRole.Member));
+        await tx.CommitAsync();
+        Assert.Equal(HttpStatusCode.Forbidden, (await pending).StatusCode);
+        Assert.Equal(Discorda.Core.Workspaces.MemberRole.Member, await db.WorkspaceMembers.Where(m => m.UserId == target.Id).Select(m => m.Role).SingleAsync());
+    }
     private static readonly Guid Channel = Guid.Parse("225a47d7-779e-4992-89d2-03b1517f9112");
     private static string Messages => $"/api/v1/chat/channels/{Channel}/messages";
     private static string Tools => $"/api/v1/chat/channels/{Channel}";
@@ -64,7 +163,8 @@ public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixt
         Assert.Equal(HttpStatusCode.BadRequest,(await o.PutAsJsonAsync("/api/v1/admin/setup",new{name="x",textChannels=new string[11],voiceChannels=Array.Empty<string>()})).StatusCode);
         var report=await o.GetStringAsync("/api/v1/admin/operations");
         foreach(var secret in new[]{email,"password","apiSecret","connectionString"})Assert.DoesNotContain(secret,report,StringComparison.OrdinalIgnoreCase);
-        var status=JsonDocument.Parse(report).RootElement;Assert.Equal("ready",status.GetProperty("database").GetString());Assert.True(status.GetProperty("storage").GetProperty("databaseBytes").GetInt64()>0);
+        var compatibility=await o.GetFromJsonAsync<JsonElement>("/api/v1/compatibility");Assert.Equal(1,compatibility.GetProperty("protocol").GetInt32());
+        var status=JsonDocument.Parse(report).RootElement;Assert.Equal(1,status.GetProperty("versions").GetProperty("protocol").GetInt32());Assert.StartsWith("17.",status.GetProperty("versions").GetProperty("database").GetString());Assert.Equal("ready",status.GetProperty("database").GetString());Assert.True(status.GetProperty("storage").GetProperty("databaseBytes").GetInt64()>0);
     }
     [Fact]
     public async Task ChannelCapacityIsSharedBySetupAndManualCreationAndRetriesAreSafe()

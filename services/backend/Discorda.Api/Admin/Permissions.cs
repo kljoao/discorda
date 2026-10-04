@@ -9,6 +9,18 @@ namespace Discorda.Api.Admin;
 
 public static class Permissions
 {
+    public static async Task<Microsoft.EntityFrameworkCore.Storage.IDbContextTransaction> BeginChange(DiscordaDbContext db, CancellationToken ct)
+    {
+        var transaction = await db.Database.BeginTransactionAsync(ct);
+        try
+        {
+            // Serialize role changes with privileged mutations, including across API processes.
+            // Authorization must be read after taking the lock, not before waiting for it.
+            await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891322)", ct);
+            return transaction;
+        }
+        catch { await transaction.DisposeAsync(); throw; }
+    }
     public static Guid User(HttpContext ctx) => ((MemberProfile)ctx.Items[typeof(MemberProfile)]!).Id;
     public static int Rank(MemberRole role) => role switch { MemberRole.Owner => 3, MemberRole.Admin => 2, MemberRole.Moderator => 1, _ => 0 };
     public static async Task<MemberRole> Role(HttpContext ctx, IConfiguration config, DiscordaDbContext db, CancellationToken ct)

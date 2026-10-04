@@ -59,9 +59,9 @@ public static class ChatFeatures
             return Results.NoContent();
         });
         api.MapPut("/channels/{channelId:guid}/messages/{id:long}/pin", async (Guid channelId, long id, PinChange input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) => {
+            await using var tx = await Permissions.BeginChange(db, ct);
             if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 1) return Results.Forbid();
             if (!await ChatEndpoints.Access(db, channelId, Permissions.User(ctx), ct) || !await db.Messages.AnyAsync(m => m.Id == id && m.ChannelId == channelId && m.DeletedAt == null, ct)) return Results.NotFound();
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
             if (input.Enabled) await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO discorda.message_pins (\"MessageId\",\"UserId\",\"CreatedAt\") VALUES ({id},{Permissions.User(ctx)},{DateTimeOffset.UtcNow}) ON CONFLICT DO NOTHING", ct);
             else await db.MessagePins.Where(p => p.MessageId == id).ExecuteDeleteAsync(ct);
             Permissions.Audit(db, ctx, input.Enabled ? "message.pin" : "message.unpin", id.ToString()); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);

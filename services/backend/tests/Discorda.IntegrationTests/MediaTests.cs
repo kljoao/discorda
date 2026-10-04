@@ -1,3 +1,5 @@
+using Microsoft.EntityFrameworkCore;
+using Discorda.Api.Chat;
 using System.IdentityModel.Tokens.Jwt;
 using System.Net;
 using System.Net.Http.Headers;
@@ -35,6 +37,24 @@ public sealed class MediaTests(AuthFixture fixture) : IClassFixture<AuthFixture>
         (await client.GetAsync("/api/v1/chat/workspace")).EnsureSuccessStatusCode(); return (client, email);
     }
     [Fact]
+    public async Task ReadyMustMatchCurrentConnectedLeaseAndOccupiedTemporaryRoomDoesNotExpire()
+    {
+        await using var app = App(); var (client, _) = await Member(app); using var member = client;
+        var room = await (await client.PostAsJsonAsync("/api/v1/chat/temporary-rooms", new { name = "Occupied" })).Content.ReadFromJsonAsync<JsonElement>();
+        var channel = room.GetProperty("id").GetGuid();
+        var grant = await (await client.PostAsJsonAsync("/api/v1/chat/media/join", new MediaCommand(channel, null))).Content.ReadFromJsonAsync<JsonElement>();
+        var lease = grant.GetProperty("leaseId").GetGuid();
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/v1/chat/media/ready", new MediaCommand(channel, Guid.NewGuid()))).StatusCode);
+        Assert.Equal(HttpStatusCode.Conflict, (await client.PostAsJsonAsync("/api/v1/chat/media/ready", new MediaCommand(channel, lease))).StatusCode);
+        stub.Identity = lease.ToString();
+        (await client.PostAsJsonAsync("/api/v1/chat/media/ready", new MediaCommand(channel, lease))).EnsureSuccessStatusCode();
+        Assert.Contains((await client.GetFromJsonAsync<VoiceMember[]>("/api/v1/chat/media/roster"))!, m => m.LeaseId == lease);
+        await using var db = fixture.Database();
+        await db.Channels.Where(c => c.Id == channel).ExecuteUpdateAsync(s => s.SetProperty(c => c.EmptySince, DateTimeOffset.UtcNow.AddMinutes(-3)));
+        await TemporaryRooms.Sweep(db, app.Services.GetRequiredService<MediaService>(), app.Services.GetRequiredService<LiveChat>(), CancellationToken.None);
+        var saved = await db.Channels.AsNoTracking().SingleAsync(c => c.Id == channel); Assert.Null(saved.ArchivedAt); Assert.Null(saved.EmptySince);
+    }
+    [Fact]
     public async Task JoinRequiresMembershipAndIssuesOnlyScopedShortMediaToken()
     {
         await using var app = App(); using var anonymous = app.CreateClient();
@@ -69,12 +89,33 @@ public sealed class MediaTests(AuthFixture fixture) : IClassFixture<AuthFixture>
     private sealed class MediaStub : HttpMessageHandler
     {
         public string? Identity;
-        protected override Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
+        public TaskCompletionSource? Creating;
+        public TaskCompletionSource? Release;
+        protected override async Task<HttpResponseMessage> SendAsync(HttpRequestMessage request, CancellationToken cancellationToken)
         {
+            if (request.RequestUri!.AbsolutePath.EndsWith("CreateRoom", StringComparison.Ordinal) && Creating is not null)
+            { Creating.TrySetResult(); await Release!.Task.WaitAsync(cancellationToken); }
             object response = request.RequestUri!.AbsolutePath.EndsWith("ListRooms", StringComparison.Ordinal) ? new { rooms = new[] { new { name = MediaService.RoomName(Voice) } } }
                 : request.RequestUri.AbsolutePath.EndsWith("ListParticipants", StringComparison.Ordinal) ? new { participants = Identity is null ? Array.Empty<object>() : new object[] { new { identity = Identity, name = "Old name" } } } : new { };
-            return Task.FromResult(new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(response) });
+            return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(response) };
         }
+    }
+
+    [Fact]
+    public async Task InFlightJoinCannotUndoModeratorRemoval()
+    {
+        await using var app = App();
+        var media = app.Services.GetRequiredService<MediaService>();
+        var profile = new MemberProfile(Guid.NewGuid(), "Synthetic", "member@example.test", null);
+        await media.Join(profile, Guid.NewGuid(), Voice, CancellationToken.None);
+        stub.Creating = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        stub.Release = new(TaskCreationOptions.RunContinuationsAsynchronously);
+        var join = media.Join(profile, Guid.NewGuid(), Voice, CancellationToken.None);
+        await stub.Creating.Task.WaitAsync(TimeSpan.FromSeconds(2));
+        Assert.True(await media.Moderate(profile.Id, null, CancellationToken.None));
+        stub.Release.SetResult();
+        await Assert.ThrowsAsync<MediaAdmissionDeniedException>(() => join);
+        Assert.False(media.AdmissionAllowed(profile.Id, Voice));
     }
 
     [Fact]

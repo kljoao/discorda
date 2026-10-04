@@ -18,7 +18,7 @@ x-api: &api
     options: {max-size: 10m, max-file: '3'}
 services:
   postgres:
-    image: postgres:17.9-alpine
+    image: postgres:17.11-alpine3.23
     restart: unless-stopped
     environment:
       POSTGRES_DB: discorda
@@ -34,11 +34,18 @@ services:
   migrate:
     <<: *api
     command: [migrate]
+    volumes:
+      - ../../.discorda/selfhost/migration.json:/run/discorda/settings.json:ro
+      - ../../.discorda/selfhost/server.pfx:/run/discorda/server.pfx:ro
+      - state:/app/state
     depends_on:
       postgres: {condition: service_healthy}
     restart: 'no'
   livekit:
     image: livekit/livekit-server:v1.13.7
+    user: '1654:1654'
+    cap_drop: [ALL]
+    security_opt: [no-new-privileges:true]
     command: [--config, /etc/livekit.yaml]
     restart: unless-stopped
     volumes: [../../.discorda/selfhost/livekit.yaml:/etc/livekit.yaml:ro]

@@ -14,6 +14,7 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
     public DbSet<Workspace> Workspaces => Set<Workspace>();
     public DbSet<WorkspaceMember> WorkspaceMembers => Set<WorkspaceMember>();
     public DbSet<Channel> Channels => Set<Channel>();
+    public DbSet<MessageAttachment> MessageAttachments => Set<MessageAttachment>();
     public DbSet<Message> Messages => Set<Message>();
 
     public DbSet<MessageReaction> MessageReactions => Set<MessageReaction>();
@@ -23,6 +24,12 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        model.Entity<MessageAttachment>(b => {
+            b.ToTable("message_attachments", "discorda"); b.HasKey(x => x.Id);
+            b.Property(x => x.Name).HasMaxLength(180);
+            b.HasIndex(x => x.MessageId).IsUnique();
+            b.HasOne<Message>().WithMany().HasForeignKey(x => x.MessageId).OnDelete(DeleteBehavior.Cascade);
+        });
         model.HasDefaultSchema("discorda");
         model.Entity<MessageReaction>(e => {
             e.ToTable("message_reactions"); e.HasKey(x => new { x.MessageId, x.UserId, x.Emoji });
@@ -54,6 +61,8 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
             entity.Property(x => x.Body).HasMaxLength(4000);
             entity.Property(x => x.Version).IsConcurrencyToken();
             entity.HasIndex(x => new { x.ChannelId, x.Id });
+            entity.HasIndex(x => new { x.ChannelId, x.ThreadRootId, x.Id });
+            entity.HasOne<Message>().WithMany().HasForeignKey(x => x.ThreadRootId).OnDelete(DeleteBehavior.Restrict);
             entity.HasIndex(x => new { x.AuthorId, x.ClientId }).IsUnique();
             entity.HasOne<Channel>().WithMany().HasForeignKey(x => x.ChannelId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<User>().WithMany().HasForeignKey(x => x.AuthorId).OnDelete(DeleteBehavior.Restrict);

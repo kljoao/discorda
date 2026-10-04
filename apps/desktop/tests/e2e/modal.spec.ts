@@ -2,7 +2,7 @@ import {chromium,expect,test} from '@playwright/test';
 import {createServer} from 'vite';
 
 test('capture dialog traps keyboard focus and Escape returns it to the trigger',async()=>{
-  const server=await createServer({server:{port:5184,strictPort:true}});
+  const server=await createServer({cacheDir:'node_modules/.vite-e2e-modal',optimizeDeps:{entries:['tests/e2e/modal.fixture.html']},server:{port:5184,strictPort:true}});
   await server.listen();
   const browser=await chromium.launch({channel:'msedge',headless:true});
   try{

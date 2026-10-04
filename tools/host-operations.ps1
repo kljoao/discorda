@@ -3,6 +3,7 @@ $ErrorActionPreference='Stop'
 $root=Split-Path $PSScriptRoot -Parent
 $selfHost=Test-Path -LiteralPath (Join-Path $root '.discorda/selfhost/compose.env')
 $settingsPath=if($selfHost){Join-Path $root '.discorda/selfhost/settings.json'}else{Join-Path $env:APPDATA 'Microsoft/UserSecrets/discorda-development/secrets.json'}
+if($selfHost -and $Action -in @('start','admin')){& (Join-Path $PSScriptRoot 'harden-database.ps1')}
 $composeArgs=@('compose','--env-file',(Join-Path $root '.discorda/selfhost/compose.env'),'-f',(Join-Path $root 'infra/compose/selfhost.yml'))
 function Docker([string[]]$Arguments){$previous=$ErrorActionPreference;try{$ErrorActionPreference='Continue';$result=& docker.exe @Arguments 2>&1;$code=$LASTEXITCODE}finally{$ErrorActionPreference=$previous};if($code -ne 0){throw 'Docker recusou a operação. Confira Docker Desktop e a configuração do host.'};return $result}
 function Compose([string[]]$Arguments){Docker ($composeArgs+$Arguments)}
@@ -45,6 +46,7 @@ switch($Action){
   $remote='/tmp/discorda-'+[Guid]::NewGuid().ToString('N')+'.dump'
   try{Docker @('exec',$id,'pg_dump','-U',$dbUser,'-d','discorda','-Fc','-f',$remote)|Out-Null;Docker @('cp',($id+':'+$remote),(Join-Path $folder 'database.dump'))|Out-Null;Docker @('exec',$id,'pg_restore','--list',$remote)|Out-Null}finally{Docker @('exec',$id,'rm','-f',$remote)|Out-Null}
   if(Test-Path -LiteralPath $settingsPath){Copy-Item -LiteralPath $settingsPath -Destination (Join-Path $folder 'settings.json')}
+  if($selfHost){$migrationFile=Join-Path $root '.discorda/selfhost/migration.json';if(Test-Path -LiteralPath $migrationFile){Copy-Item -LiteralPath $migrationFile -Destination $folder}}
   if($selfHost){foreach($file in @('server.pfx','postgres-password','livekit.yaml','compose.env')){Copy-Item -LiteralPath (Join-Path $root ('.discorda/selfhost/'+$file)) -Destination $folder};$api=(Compose @('ps','-a','-q','api')|Out-String).Trim();if($api){$previous=$ErrorActionPreference;try{$ErrorActionPreference='Continue';$null=& docker.exe cp ($api+':/app/state/network.json') (Join-Path $folder 'network.json') 2>&1}finally{$ErrorActionPreference=$previous}}}
   else{foreach($file in @('server.pfx','livekit.yaml')){$source=Join-Path $root ('artifacts/radmin/'+$file);if(Test-Path -LiteralPath $source){Copy-Item -LiteralPath $source -Destination $folder}};foreach($name in @('host.json','network.json')){$hostFile=Join-Path $root ('.discorda/'+$name);if(Test-Path -LiteralPath $hostFile){Copy-Item -LiteralPath $hostFile -Destination $folder}}}
   @{format=1;networkIncluded=(Test-Path -LiteralPath (Join-Path $folder 'network.json'));mode=$(if($selfHost){'selfhost'}else{'native'});createdAt=[DateTime]::UtcNow.ToString('o');databaseSha256=(Get-FileHash -LiteralPath (Join-Path $folder 'database.dump') -Algorithm SHA256).Hash}|ConvertTo-Json|Set-Content -LiteralPath (Join-Path $folder 'manifest.json')
@@ -70,6 +72,7 @@ switch($Action){
   if(!$selfHost -and !$settings.'SelfHost:StateDirectory'){$settings|Add-Member -NotePropertyName 'SelfHost:StateDirectory' -NotePropertyValue (Join-Path $root '.discorda') -Force}
   if(!$selfHost -and !$settings.'SelfHost:HostIp'){$hostFile=Join-Path $root '.discorda/host.json';if(Test-Path -LiteralPath $hostFile){$hostSettings=Get-Content -LiteralPath $hostFile -Raw|ConvertFrom-Json;$settings|Add-Member -NotePropertyName 'SelfHost:HostIp' -NotePropertyValue $hostSettings.hostIp -Force}}
   $settings|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $settingsPath -Encoding UTF8
+  if($selfHost){$migrationFile=Join-Path $root '.discorda/selfhost/migration.json';$migration=Get-Content -LiteralPath $migrationFile -Raw|ConvertFrom-Json;$migration.Admin.Email=$Value;$migration|ConvertTo-Json -Depth 30|Set-Content -LiteralPath $migrationFile -Encoding utf8}
   if($selfHost){Compose @('run','--rm','migrate')|Out-Null}else{$env:ASPNETCORE_ENVIRONMENT='Development';& dotnet run --no-build --project (Join-Path $root 'services/backend/Discorda.Api') -- whitelist allow $Value |Out-Null;if($LASTEXITCODE -ne 0){throw 'Configuração salva, mas não foi possível autorizar o e-mail. Confira o banco antes de reiniciar.'}}
   'Administrador salvo e autorizado. Pare e inicie os serviços para aplicar. O administrador anterior perde o gerenciamento; sua conta permanece como membro até ser bloqueada.';break
  }

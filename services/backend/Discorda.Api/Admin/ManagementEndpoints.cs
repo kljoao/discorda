@@ -25,9 +25,9 @@ public static class ManagementEndpoints
         });
         group.MapPut("/members/{userId:guid}/role", async (Guid userId, RoleChange input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) => {
             if (!Enum.TryParse<MemberRole>(input.Role, out var role) || role is MemberRole.Owner || !Enum.IsDefined(role)) return Results.BadRequest();
+            await using var tx = await Permissions.BeginChange(db, ct);
             var rank = Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct));
             if (userId == Permissions.User(ctx) || rank < 2 || rank <= Permissions.Rank(role) || rank <= Permissions.Rank(await Permissions.TargetRole(userId, app.Configuration, db, ct))) return Results.Forbid();
-            await using var tx = await db.Database.BeginTransactionAsync(ct);
             var member = await db.WorkspaceMembers.SingleOrDefaultAsync(m => m.UserId == userId && m.WorkspaceId == ChatEndpoints.GroupId, ct);
             if (member is null) return Results.NotFound();
             member.Role = role; Permissions.Audit(db, ctx, "role." + role, userId.ToString());
@@ -40,11 +40,13 @@ public static class ManagementEndpoints
                 .Select(x => new { id = x.Id.ToString(), x.ActorId, x.Action, x.Target, x.CreatedAt }).ToArrayAsync(ct));
         });
         group.MapPost("/members/{userId:guid}/voice", async (Guid userId, VoiceChange input, HttpContext ctx, DiscordaDbContext db, MediaService media, LiveChat live, CancellationToken ct) => {
+            await using var tx = await Permissions.BeginChange(db, ct);
             if (userId == Permissions.User(ctx) || Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) <= Permissions.Rank(await Permissions.TargetRole(userId, app.Configuration, db, ct))) return Results.Forbid();
             if (input.ChannelId is Guid channel && !await db.Channels.AnyAsync(c => c.Id == channel && c.WorkspaceId == ChatEndpoints.GroupId && c.Type == Discorda.Core.Channels.ChannelType.Voice && c.ArchivedAt == null, ct)) return Results.NotFound();
             // Revoke admission before notifying the client; UI is not the authority.
             if (!await media.Moderate(userId, input.ChannelId, ct)) return Results.NotFound();
             Permissions.Audit(db, ctx, input.ChannelId is null ? "voice.remove" : "voice.move", userId.ToString()); await db.SaveChangesAsync(ct);
+            await tx.CommitAsync(ct);
             await live.Publish("moderation", new { userId, channelId = input.ChannelId }); return Results.NoContent();
         }).RequireRateLimiting("admin-writes");
     }

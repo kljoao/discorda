@@ -47,9 +47,11 @@ docker compose --env-file .discorda/selfhost/compose.env -f infra/compose/selfho
 
 O último comando só funciona depois de salvar a primeira lista no painel. Copie a pasta `.discorda/selfhost` inteira para armazenamento privado/criptografado. Ela contém segredos e certificado. O provedor Google e seus usuários de autenticação continuam no projeto Supabase: o dump local não os inclui.
 
-Para restaurar em uma **instância nova e vazia**, restaure primeiro os arquivos privados, suba PostgreSQL sozinho, copie o dump e use `pg_restore -U discorda -d discorda --no-owner --exit-on-error /tmp/discorda-backup.dump`. Não restaure em cima de um banco em uso. Depois execute `start-selfhost.ps1`, restaure a lista pelo painel e reaplique o Firewall. Preserve a mesma URL Supabase para manter identidades. Teste o procedimento antes de depender do backup.
+Para restaurar em uma **instância nova e vazia**, restaure primeiro os arquivos privados, suba PostgreSQL sozinho, copie o dump e use `pg_restore -U discorda -d discorda --no-owner --no-privileges --exit-on-error /tmp/discorda-backup.dump`. Não restaure em cima de um banco em uso. Depois execute `start-selfhost.ps1`, restaure a lista pelo painel e reaplique o Firewall. Preserve a mesma URL Supabase para manter identidades. Teste o procedimento antes de depender do backup.
 
 ## Atualizar
+
+A API usa `discorda_runtime`; somente a migration recebe a conta administrativa de `migration.json`. Os scripts de início separam as contas de instalações antigas geradas pelo assistente. Consulte [a atualização de segurança](security-audit.md) para configurações customizadas. Preserve ambos os JSONs nos backups. PostgreSQL passa de 17.9 para 17.11, na mesma família Alpine 3.23; essa troca reinicia o banco e requer janela de manutenção.
 
 Faça backup antes. Baixe/revise a versão desejada, então execute `start-selfhost.ps1`. As migrations são um serviço separado; falha de migration impede a nova API de iniciar. Uma migration aplicada pode não ser compatível com rollback de código: para reverter, use código e backup compatíveis em conjunto. Nunca troque a tag major do PostgreSQL sem migração planejada.
 
@@ -57,7 +59,7 @@ Atualização do desktop é independente da atualização do servidor. O mantene
 
 ## Recuperar acesso administrativo
 
-Se o Google deixou de funcionar, corrija o provedor no dashboard Supabase. Se apenas o e-mail administrador mudou, edite `Admin.Email` no arquivo privado, execute o serviço de migration para autorizar o novo e-mail e recrie a API:
+Se o Google deixou de funcionar, corrija o provedor no dashboard Supabase. Se apenas o e-mail administrador mudou, edite `Admin.Email` em `settings.json` e `migration.json`, execute o serviço de migration para autorizar o novo e-mail e recrie a API:
 
 ```powershell
 docker compose --env-file .discorda/selfhost/compose.env -f infra/compose/selfhost.yml run --rm migrate
@@ -68,7 +70,7 @@ Para bloquear explicitamente o e-mail antigo após entrar: use o painel. A troca
 
 ## Rotacionar secrets e certificado
 
-A senha do PostgreSQL não muda quando você simplesmente edita `postgres-password` em um volume já inicializado. Faça a alteração no banco usando `psql` e `\password discorda` (prompt de senha, evitando histórico com segredo), atualize os dois arquivos privados e reinicie API/migration. Chaves LiveKit devem coincidir nos dois arquivos e exigem recriar os serviços; isso interrompe chamadas.
+A senha do PostgreSQL não muda quando você simplesmente edita `postgres-password` em um volume já inicializado. Faça a alteração no banco usando `psql` e `\password discorda` (prompt de senha, evitando histórico com segredo), atualize `postgres-password` e a conexão administrativa de `migration.json`. A API usa uma conta diferente: para rotacioná-la, execute `\password discorda_runtime`, atualize a conexão de `settings.json` e `Migration.RuntimePassword` de `migration.json`, e recrie a API. A migration não redefine a senha de uma conta já existente. Chaves LiveKit devem coincidir nos dois arquivos e exigem recriar os serviços; isso interrompe chamadas.
 
 O certificado gerado vence em um ano. Renove antes do vencimento usando uma CA privada e SAN com o IP do host, exporte o novo PFX, atualize o caminho/senha no JSON e gere outro arquivo de conexão com os certificados públicos. Todos os clientes precisam reimportar a conexão, pois o aplicativo fixa o certificado. Guarde a CA com segurança. Não há renovação automática nesta versão.
 

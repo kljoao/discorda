@@ -1,5 +1,7 @@
 # Segurança
 
+Consulte a [auditoria de segurança de 03/10/2026](docs/security-audit.md) para correções, cobertura, testes, atualização das contas do banco e riscos residuais. Esse relatório não substitui a validação da implantação nem garante ausência de vulnerabilidades.
+
 Não publique credenciais, e-mails de membros, IPs privados, arquivos de conexão, dumps, logs ou capturas de configurações em issues. Relate vulnerabilidades pelo recurso **Report a vulnerability / Private vulnerability reporting** do GitHub, quando habilitado no repositório; caso indisponível, peça um canal privado ao mantenedor sem incluir detalhes exploráveis.
 
 ## Modelo de confiança

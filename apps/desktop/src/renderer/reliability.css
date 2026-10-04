@@ -1,0 +1,25 @@
+.call-check { border:1px solid #3b3b44; border-radius:12px; padding:20px; margin-bottom:24px; background:#202026; }
+.call-check h3 { margin-top:0; }
+.call-check p,.update-recovery p { color:#bcbcc8; line-height:1.65; }
+.call-check ol { list-style:none; padding:0; display:grid; gap:10px; }
+.call-check li { display:grid; gap:5px; border-left:3px solid #777785; padding:8px 12px; }
+.call-check li[data-state=ok] { border-color:#9ba9ff; }
+.call-check li[data-state=attention] { border-color:#e0b77b; }
+.call-check li span { color:#c6c6cf; line-height:1.6; }
+.call-check button,.operations-panel>button { min-height:36px; margin-right:8px; }
+.call-check button { padding:9px 14px; border:1px solid #51515e; border-radius:8px; background:#2b2b34; color:#eeeef5; cursor:pointer; }
+.call-check>button { background:#a3adff; color:#171722; border-color:#a3adff; font-weight:600; }
+.call-check button:hover { filter:brightness(1.12); }
+.call-check button:disabled { cursor:not-allowed; opacity:0.55; }
+.call-check button[aria-pressed=true] { border-color:#b6bfff; background:#383e60; }
+.voice-recovery-notice button { color:#b6bfff; text-decoration:underline; padding:6px; }
+.skip-conversation { position:fixed; top:-100px; left:16px; z-index:1000; padding:12px 18px; background:#b6bfff; color:#17171c; border-radius:8px; }
+.skip-conversation:focus { top:12px; }
+:is(button,input,select,textarea,summary,[tabindex]):focus-visible { outline:2px solid #b6bfff; outline-offset:3px; }
+.settings-content[role=tabpanel]:focus-visible { outline-offset:-3px; }
+.update-recovery { margin-top:16px; padding-top:16px; border-top:1px solid #44444d; }
+.update-recovery summary { cursor:pointer; padding:8px 0; }
+:root[data-contrast=true] .call-check { background:#101014; border-color:#eee; }
+:root[data-contrast=true] :is(.call-check p,.call-check li span,.update-recovery p) { color:#fff; }
+@media(prefers-reduced-motion:reduce) { *,*::before,*::after { scroll-behavior:auto!important; animation-duration:0.01ms!important; transition-duration:0.01ms!important; } }
+:root[data-motion=reduced] *, :root[data-motion=reduced] *::before, :root[data-motion=reduced] *::after { scroll-behavior:auto!important; animation-duration:0.01ms!important; transition-duration:0.01ms!important; }

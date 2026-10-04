@@ -4,7 +4,7 @@ import {createServer} from 'vite';
 import path from 'node:path';
 test('voice channel opens avatars and screen replacement preserves publication and audio',async()=>{
  test.setTimeout(60000);
- const server=await createServer({resolve:{alias:[{find:/^livekit-client$/,replacement:path.resolve('tests/e2e/livekit.fixture.ts')}]},server:{port:5187,strictPort:true}});await server.listen();
+ const server=await createServer({cacheDir:'node_modules/.vite-e2e-voice',optimizeDeps:{entries:['tests/e2e/voice.fixture.html']},resolve:{alias:[{find:/^livekit-client$/,replacement:path.resolve('tests/e2e/livekit.fixture.ts')}]},server:{port:5187,strictPort:true}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage({viewport:{width:1240,height:820}});
@@ -17,13 +17,25 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await expect(page.locator('.avatar-tile.speaking')).toHaveCount(1);
   expect(await page.locator('.avatar-tile').evaluateAll(tiles=>tiles.every(tile=>{const r=tile.getBoundingClientRect();return r.right<=window.innerWidth&&r.bottom<=window.innerHeight&&r.top>=0&&r.width>0;}))).toBe(true);
   await page.screenshot({path:'test-results/voice-grid.png',fullPage:true});
+  await expect(page.locator('.voice-roster .voice-member-name')).toHaveText(['Ana','Bruno','Carla','Diego','Você']);
+  await page.evaluate(()=>(window as any).addFixtureStreams());
+  await page.getByRole('button',{name:'Mosaico de transmissões'}).click();
+  await expect(page.locator('.voice-grid video')).toHaveCount(2);
+  await page.getByRole('button',{name:'Modo cinema',exact:true}).click();
+  await expect(page.locator('.cinema-mode')).toBeVisible();
+  await page.screenshot({path:'test-results/cinema-multistream.png',fullPage:true});
+  await page.keyboard.press('Escape');await expect(page.locator('.cinema-mode')).toHaveCount(0);
+  await page.getByRole('checkbox',{name:'Ana',exact:true}).uncheck();
+  await expect(page.locator('.voice-grid video')).toHaveCount(1);
+  await page.getByRole('checkbox',{name:'Ana',exact:true}).check();
+
   await page.getByRole('button',{name:'geral',exact:true}).click();
   await expect(page.getByText('Chat de texto',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Sair da chamada'})).toBeVisible();
   await voice.click();await expect(page.getByRole('region',{name:'Chamada Conversa'})).toBeVisible();
   await page.getByRole('button',{name:'Compartilhar tela',exact:true}).click();
   await page.getByRole('button',{name:'screen:1',exact:true}).click();
-  const snapshot=()=>page.evaluate(()=>(window as unknown as {voiceSnapshot:()=>{starts:number;stops:number;old:string;current:string;audio:number}}).voiceSnapshot());
+  const snapshot=()=>page.evaluate(()=>(window as unknown as {voiceSnapshot:()=>{joins:number;starts:number;stops:number;old:string;current:string;audio:number}}).voiceSnapshot());
   await expect(page.getByRole('button',{name:'Parar tela',exact:true})).toBeVisible();
   await page.getByRole('button',{name:'Parar tela',exact:true}).click({button:'right'});
   await page.getByRole('button',{name:'Ativar som do PC',exact:true}).click();
@@ -44,5 +56,14 @@ test('voice channel opens avatars and screen replacement preserves publication a
   expect(await snapshot()).toMatchObject({starts:1,stops:0,current:'live'});
   await page.getByRole('button',{name:'Parar tela',exact:true}).click();
   await expect.poll(async()=>(await snapshot()).stops).toBe(1);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'suspend'})));
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'resume'})));
+  await expect.poll(async()=>(await snapshot()).joins).toBe(2);
+  await expect(page.getByRole('button',{name:'Compartilhar tela',exact:true})).toBeEnabled();
+  await expect(page.getByRole('button',{name:'Ligar câmera',exact:true})).toBeVisible();
+  await page.getByRole('button',{name:'Sair da chamada'}).click();
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'resume'})));
+  await expect(page.getByRole('button',{name:'Sair da chamada'})).toHaveCount(0);
+  expect((await snapshot()).joins).toBe(2);
  }finally{await browser.close();await server.close();}
 });

@@ -6,6 +6,7 @@ compose=(docker compose --env-file .discorda/vps/compose.env -f infra/compose/vp
 case "${1:-status}" in
   database) "${compose[@]}" up -d --wait postgres ;;
   start)
+    python3 tools/harden-database.py
     "${compose[@]}" build api
     "${compose[@]}" up -d --wait postgres
     "${compose[@]}" run --rm migrate

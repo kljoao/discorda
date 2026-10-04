@@ -33,6 +33,9 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.Property<DateTimeOffset?>("ArchivedAt")
                         .HasColumnType("timestamp with time zone");
 
+                    b.Property<DateTimeOffset?>("EmptySince")
+                        .HasColumnType("timestamp with time zone");
+
                     b.Property<string>("Name")
                         .IsRequired()
                         .HasMaxLength(80)
@@ -40,6 +43,9 @@ namespace Discorda.Infrastructure.Persistence.Migrations
 
                     b.Property<int>("SortOrder")
                         .HasColumnType("integer");
+
+                    b.Property<Guid?>("TemporaryOwnerId")
+                        .HasColumnType("uuid");
 
                     b.Property<string>("Type")
                         .IsRequired()
@@ -155,6 +161,9 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .HasColumnType("tsvector")
                         .HasComputedColumnSql("to_tsvector('portuguese', \"Body\")", true);
 
+                    b.Property<long?>("ThreadRootId")
+                        .HasColumnType("bigint");
+
                     b.Property<long>("Version")
                         .IsConcurrencyToken()
                         .HasColumnType("bigint");
@@ -167,15 +176,48 @@ namespace Discorda.Infrastructure.Persistence.Migrations
 
                     NpgsqlIndexBuilderExtensions.HasMethod(b.HasIndex("SearchVector"), "GIN");
 
+                    b.HasIndex("ThreadRootId");
+
                     b.HasIndex("AuthorId", "ClientId")
                         .IsUnique();
 
                     b.HasIndex("ChannelId", "Id");
 
+                    b.HasIndex("ChannelId", "ThreadRootId", "Id");
+
                     b.ToTable("messages", "discorda", t =>
                         {
                             t.HasCheckConstraint("ck_message_version", "\"Version\" > 0");
                         });
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.MessageAttachment", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<byte[]>("Content")
+                        .IsRequired()
+                        .HasColumnType("bytea");
+
+                    b.Property<long>("MessageId")
+                        .HasColumnType("bigint");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(180)
+                        .HasColumnType("character varying(180)");
+
+                    b.Property<int>("Size")
+                        .HasColumnType("integer");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("MessageId")
+                        .IsUnique();
+
+                    b.ToTable("message_attachments", "discorda");
                 });
 
             modelBuilder.Entity("Discorda.Core.Channels.MessagePin", b =>
@@ -431,6 +473,20 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .WithMany()
                         .HasForeignKey("ReplyToId")
                         .OnDelete(DeleteBehavior.Restrict);
+
+                    b.HasOne("Discorda.Core.Channels.Message", null)
+                        .WithMany()
+                        .HasForeignKey("ThreadRootId")
+                        .OnDelete(DeleteBehavior.Restrict);
+                });
+
+            modelBuilder.Entity("Discorda.Core.Channels.MessageAttachment", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Message", null)
+                        .WithMany()
+                        .HasForeignKey("MessageId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
                 });
 
             modelBuilder.Entity("Discorda.Core.Channels.MessagePin", b =>

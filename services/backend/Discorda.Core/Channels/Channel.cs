@@ -4,6 +4,8 @@ public enum ChannelType { Text, Voice }
 
 public sealed class Channel
 {
+    public Guid? TemporaryOwnerId { get; init; }
+    public DateTimeOffset? EmptySince { get; set; }
     public Guid Id { get; init; } = Guid.NewGuid();
     public Guid WorkspaceId { get; init; }
     public required string Name { get; set; }

@@ -19,7 +19,7 @@ test('built desktop loads with a sandboxed preload and functional health action'
     const page = await app.firstWindow();
     await expect(page.getByRole('heading', { level: 1 })).toContainText('O seu grupo.');
     expect(await page.evaluate(() => typeof (window as unknown as { require?: unknown }).require)).toBe('undefined');
-    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['servers','onInvite','shortcuts','onShortcut','admin','notifyMessage','diagnostics','reconnectLive','updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
+    expect(await page.evaluate(() => Object.keys(window.discorda ?? {}).sort())).toEqual(['onPowerState','servers','onInvite','shortcuts','onShortcut','admin','notifyMessage','diagnostics','reconnectLive','updates','importServer','connectServer','voiceActivity','audioStatus','devicePermissions','audioApplications','applicationAudio','onApplicationAudio','onApplicationAudioEnd','microphoneTest', 'captureSources', 'media', 'selectCapture', 'cancelSignIn', 'chat', 'checkServices', 'getAppInfo', 'getAuthState', 'liveActivity', 'onLiveEvent', 'signIn', 'signOut', 'startLive', 'stopLive'].sort());
     // Electron exposes this diagnostic method at runtime but omits it from its public types.
     const preferences = await app.evaluate(({ BrowserWindow }) => {
       const contents = BrowserWindow.getAllWindows()[0].webContents as unknown as {

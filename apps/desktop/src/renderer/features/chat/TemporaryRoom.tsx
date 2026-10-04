@@ -1,0 +1,7 @@
+import {useState} from 'react';
+import {createPortal} from 'react-dom';
+import {Modal} from '../../components/ui/modal';
+export function TemporaryRoom({close,joined}:{close:()=>void;joined:(room:{id:string;name:string})=>void}){
+ const [name,setName]=useState(''),[busy,setBusy]=useState(false),[error,setError]=useState('');
+ return createPortal(<Modal label="Criar sala temporária" className="feature-modal" onClose={()=>{if(!busy)close();}}><form onSubmit={async e=>{e.preventDefault();if(busy||!name.trim())return;setBusy(true);setError('');try{const result=await window.discorda!.chat({kind:'temporaryRoom',name});if(!result.ok)throw Error(result.status===409?'Você pode ter até duas salas temporárias. Aguarde uma ficar vazia.':result.message);joined(result.data as {id:string;name:string});}catch(e){setError(e instanceof Error?e.message:'Não foi possível criar a sala.');}finally{setBusy(false);}}}><h2>Um espaço para agora</h2><p>Convide o grupo para uma conversa. A sala desaparece após dois minutos sem ninguém.</p><label>Nome da sala<input data-autofocus autoFocus required maxLength={40} placeholder="Partida da noite" value={name} onChange={e=>setName(e.target.value)}/></label>{error&&<p role="alert">{error}</p>}<footer><button type="button" disabled={busy} onClick={close}>Cancelar</button><button disabled={busy||!name.trim()}>{busy?'Criando…':'Criar e entrar'}</button></footer></form></Modal>,document.body);
+}

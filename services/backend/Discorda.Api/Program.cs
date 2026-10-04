@@ -47,6 +47,7 @@ builder.Services.AddProblemDetails();
 builder.Services.AddOpenApi();
 builder.Services.AddInfrastructure();
 builder.Services.AddDiscordaAuth(builder.Configuration);
+builder.Services.AddSingleton<AuthenticationBudget>();
 builder.Services.AddSignalR(options => { options.MaximumReceiveMessageSize = 4096; options.ClientTimeoutInterval = TimeSpan.FromSeconds(30); });
 builder.Services.AddSingleton(TimeProvider.System);
 builder.Services.AddSingleton<LiveChat>();
@@ -55,6 +56,7 @@ builder.Services.AddHealthChecks().AddCheck<DatabaseHealthCheck>("postgres", tag
 builder.Services.AddRateLimiter(options =>
 {
     options.RejectionStatusCode = StatusCodes.Status429TooManyRequests;
+    options.AddPolicy("attachments", _ => RateLimitPartition.GetConcurrencyLimiter("attachments", _ => new ConcurrencyLimiterOptions { PermitLimit = 2, QueueLimit = 0 }));
     options.AddPolicy("admin-writes", context => RateLimitPartition.GetFixedWindowLimiter(
         context.User.FindFirst("sub")?.Value ?? context.Connection.RemoteIpAddress?.ToString() ?? "anonymous",
         _ => new FixedWindowRateLimiterOptions { PermitLimit = 20, Window = TimeSpan.FromMinutes(1), QueueLimit = 0 }));
@@ -81,6 +83,28 @@ if (args.FirstOrDefault() == "migrate")
     var database = scope.ServiceProvider.GetRequiredService<DiscordaDbContext>().Database;
     var runtimeRole = app.Configuration["Migration:RuntimeRole"];
     var grantSql = string.IsNullOrEmpty(runtimeRole) ? null : RuntimeDatabasePermissions.GrantSql(runtimeRole);
+    var runtimePassword = app.Configuration["Migration:RuntimePassword"];
+    if (!string.IsNullOrEmpty(runtimePassword) && !string.IsNullOrEmpty(runtimeRole))
+    {
+        var createSql = RuntimeDatabasePermissions.CreateSql(runtimeRole, runtimePassword);
+        var exists = await database.SqlQuery<int>($"SELECT 1 AS \"Value\" FROM pg_roles WHERE rolname = {runtimeRole}").AnyAsync();
+        if (!exists)
+        {
+            await using var transaction = await database.BeginTransactionAsync();
+            await database.ExecuteSqlInterpolatedAsync($"SELECT set_config('discorda.runtime_password', {runtimePassword}, true)");
+            await database.ExecuteSqlRawAsync(createSql);
+            await transaction.CommitAsync();
+        }
+        var elevated = await database.SqlQuery<int>($"""
+            SELECT 1 AS "Value" FROM pg_roles r WHERE r.rolname = {runtimeRole} AND (
+                r.rolsuper OR r.rolcreatedb OR r.rolcreaterole OR r.rolreplication OR r.rolbypassrls
+                OR EXISTS (SELECT 1 FROM pg_auth_members m WHERE m.member = r.oid)
+                OR EXISTS (SELECT 1 FROM pg_namespace n WHERE n.nspowner = r.oid)
+                OR EXISTS (SELECT 1 FROM pg_class c WHERE c.relowner = r.oid)
+                OR EXISTS (SELECT 1 FROM pg_database d WHERE d.datdba = r.oid))
+            """).AnyAsync();
+        if (elevated) throw new InvalidOperationException("Runtime database role has excessive privileges.");
+    }
     await database.MigrateAsync();
     if (grantSql is not null) await database.ExecuteSqlRawAsync(grantSql);
     var email = app.Configuration["Admin:Email"];
@@ -117,10 +141,12 @@ app.UseStaticFiles(new StaticFileOptions {
         context.Context.Response.Headers["Referrer-Policy"] = "no-referrer";
     }
 });
+app.Use((context, next) => app.Services.GetRequiredService<AuthenticationBudget>().Invoke(context, next));
 app.UseAuthentication();
 app.UseRateLimiter();
 app.UseAuthorization();
 app.MapHealthChecks("/health/live", new HealthCheckOptions { Predicate = _ => false }).AllowAnonymous();
+app.MapGet("/api/v1/compatibility", () => Results.Ok(new { protocol = 1 })).AllowAnonymous();
 app.MapHealthChecks("/health/ready", new HealthCheckOptions { Predicate = check => check.Tags.Contains("ready") }).AllowAnonymous();
 if (app.Environment.IsDevelopment()) app.MapOpenApi().AllowAnonymous();
 app.MapDiscordaAuth();
@@ -128,6 +154,8 @@ app.MapDiscordaAdmin();
 app.MapCommunityAdmin();
 app.MapChat();
 app.MapChatFeatures();
+app.MapAttachments();
+app.MapTemporaryRooms();
 app.MapManagement();
 app.MapMedia();
 app.MapReverseProxy();

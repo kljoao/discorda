@@ -8,7 +8,7 @@ const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 export function validateMediaAction(value: unknown): asserts value is MediaAction {
   if (!value || typeof value !== 'object') throw new Error('Invalid media request');
   const a = value as Record<string, unknown>;
-  if (!['join', 'pulse', 'leave'].includes(String(a.kind)) || typeof a.channelId !== 'string' || !guid.test(a.channelId) || (a.kind !== 'join' && (typeof a.leaseId !== 'string' || !guid.test(a.leaseId)))) throw new Error('Invalid media request');
+  if (!['join', 'pulse', 'leave', 'ready'].includes(String(a.kind)) || typeof a.channelId !== 'string' || !guid.test(a.channelId) || (a.kind !== 'join' && (typeof a.leaseId !== 'string' || !guid.test(a.leaseId)))) throw new Error('Invalid media request');
 }
 export class MediaController {
   private active?: { channelId: string; leaseId: string };

@@ -1,6 +1,6 @@
 import { Room, RoomEvent, Track } from 'livekit-client';
 
-let room, audio, oscillator, paintTimer, localTracks = [];
+let room, audio, oscillator, paintTimer, localTracks = [], screenTracks=[];
 const remote = new Map();
 window.startProbe = async ({ url, token, color }) => {
   room = new Room({ adaptiveStream: false, dynacast: false });
@@ -37,24 +37,35 @@ window.startProbe = async ({ url, token, color }) => {
   await room.localParticipant.publishTrack(videoTrack, { source: Track.Source.Camera, simulcast: false });
 };
 window.probeStats = async () => {
-  const stats = { participants: room.remoteParticipants.size, audioBytes: 0, videoBytes: 0, framesDecoded: 0 };
+  const stats = { participants: room.remoteParticipants.size, audioBytes: 0, videoBytes: 0, framesDecoded: 0, screenFrames:0,screenAudioBytes:0 };
   for (const track of remote.values()) {
     const report = await track.getRTCStatsReport();
     report?.forEach((item) => {
       if (item.type !== 'inbound-rtp') return;
       if (item.kind === 'audio') stats.audioBytes += item.bytesReceived ?? 0;
       if (item.kind === 'video') { stats.videoBytes += item.bytesReceived ?? 0; stats.framesDecoded += item.framesDecoded ?? 0; }
+      if(track.source===Track.Source.ScreenShare)stats.screenFrames+=item.framesDecoded??0;
+      if(track.source===Track.Source.ScreenShareAudio)stats.screenAudioBytes+=item.bytesReceived??0;
     });
   }
   return stats;
 };
 window.stopProbe = async () => {
+  await window.stopScreenProbe();
   clearInterval(paintTimer);
   localTracks.forEach((track) => track.stop());
   oscillator?.stop();
   await audio?.close();
   await room?.disconnect();
+  remote.clear();
   return localTracks.every((track) => track.readyState === 'ended');
 };
 
 window.reconnectProbe=()=>room.simulateScenario('signal-reconnect');
+window.startScreenProbe=async()=>{
+ screenTracks=[localTracks[0].clone(),localTracks[1].clone()];
+ await room.localParticipant.publishTrack(screenTracks[0],{source:Track.Source.ScreenShareAudio,dtx:false});
+ await room.localParticipant.publishTrack(screenTracks[1],{source:Track.Source.ScreenShare,simulcast:false});
+};
+window.stopScreenProbe=async()=>{for(const track of screenTracks){track.stop();await room.localParticipant.unpublishTrack(track);}screenTracks=[];};
+window.muteProbe=async(muted)=>{const track=room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;if(muted)await track?.mute();else await track?.unmute();return track?.isMuted;};

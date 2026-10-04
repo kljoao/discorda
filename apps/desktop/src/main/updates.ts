@@ -3,7 +3,7 @@ import path from 'node:path';
 import {app} from 'electron';
 import { autoUpdater, NsisUpdater } from 'electron-updater';
 import { updatePublicKey } from './update-key';
-import { releaseVersion, verifyRelease,verifyInstaller,type SignedRelease } from './update-verification';
+import { compatibilityIssue, releaseVersion, verifyRelease,verifyInstaller,type SignedRelease } from './update-verification';
 import type { UpdateState } from '../shared/ipc/contracts';
 
 export class Updates {
@@ -22,7 +22,7 @@ export class Updates {
   snapshot(){return {...this.state,channel:this.channel,startupNotice:this.startupNotice};}
   private release?:SignedRelease;
   private downloaded?:string;
-  constructor(private callActive:()=>boolean){
+  constructor(private callActive:()=>boolean,private serverProtocol:()=>Promise<number|undefined>=async()=>undefined){
     autoUpdater.autoDownload=false;autoUpdater.autoInstallOnAppQuit=false;autoUpdater.allowDowngrade=false;autoUpdater.allowPrerelease=false;autoUpdater.logger=null;
     try{if(JSON.parse(readFileSync(this.preferences,'utf8')).channel==='beta'){this.channel='beta';autoUpdater.allowPrerelease=true;autoUpdater.channel='beta';autoUpdater.allowDowngrade=false;}}catch{}
     if(autoUpdater instanceof NsisUpdater)autoUpdater.verifyUpdateCodeSignature=async(_publishers,file)=>{try{if(!this.release)throw new Error();await verifyInstaller(file,this.release);return null;}catch{return 'A assinatura privada da atualização não confere.';}};
@@ -52,6 +52,8 @@ export class Updates {
   async install(){
     if(this.callActive())throw new Error('Saia da chamada antes de atualizar.');
     if(this.state.status!=='ready'||!this.release||!this.downloaded)throw new Error('Nenhuma atualização pronta.');
+    const issue=compatibilityIssue(this.release,await this.serverProtocol());
+    if(issue){this.state={...this.state,message:issue};throw new Error(issue);}
     await verifyInstaller(this.downloaded,this.release);
     if(this.callActive())throw new Error('Saia da chamada antes de atualizar.');
     writeFileSync(this.marker,JSON.stringify({target:this.release.version}),{mode:0o600});

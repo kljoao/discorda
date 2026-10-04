@@ -24,13 +24,26 @@ namespace Discorda.IntegrationTests;
 public sealed class AuthFixture : IAsyncLifetime
 {
     public const string Issuer = "https://auth-test.supabase.co/auth/v1";
-    public readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:17.9-alpine").Build();
+    public readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:17.11-alpine3.23").Build();
     private readonly RSA _rsa = RSA.Create(2048);
     public RsaSecurityKey Key { get; }
+    private string _runtimeConnection = "";
     public AuthFixture() { Key = new RsaSecurityKey(_rsa) { KeyId = "test-signing-key" }; }
     public DiscordaDbContext Database() => new(new DbContextOptionsBuilder<DiscordaDbContext>()
         .UseNpgsql(Postgres.GetConnectionString(), options => options.MigrationsHistoryTable("__EFMigrationsHistory", "discorda")).Options);
-    public async Task InitializeAsync() { await Postgres.StartAsync(); await using var db = Database(); await db.Database.MigrateAsync(); }
+    public async Task InitializeAsync()
+    {
+        await Postgres.StartAsync(); await using var db = Database(); await db.Database.MigrateAsync();
+        var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
+        await using (var tx = await db.Database.BeginTransactionAsync())
+        {
+            await db.Database.ExecuteSqlInterpolatedAsync($"SELECT set_config('discorda.runtime_password', {password}, true)");
+            await db.Database.ExecuteSqlRawAsync(RuntimeDatabasePermissions.CreateSql("discorda_runtime", password));
+            await tx.CommitAsync();
+        }
+        await db.Database.ExecuteSqlRawAsync(RuntimeDatabasePermissions.GrantSql("discorda_runtime"));
+        _runtimeConnection = new Npgsql.NpgsqlConnectionStringBuilder(Postgres.GetConnectionString()) { Username = "discorda_runtime", Password = password }.ConnectionString;
+    }
     public async Task DisposeAsync() { await Postgres.DisposeAsync(); _rsa.Dispose(); }
 
     public WebApplicationFactory<Program> App(bool verified = true, string provider = "google", string? publicKey = null) =>
@@ -39,7 +52,7 @@ public sealed class AuthFixture : IAsyncLifetime
             builder.UseEnvironment("Production");
             builder.ConfigureAppConfiguration((_, config) => config.AddInMemoryCollection(new Dictionary<string, string?>
             {
-                ["ConnectionStrings:Database"] = Postgres.GetConnectionString(),
+                ["ConnectionStrings:Database"] = _runtimeConnection,
                 ["Supabase:Url"] = "https://auth-test.supabase.co",
                 ["Supabase:PublishableKey"] = publicKey ?? "sb_publishable_test_public_key"
             }));

@@ -1,5 +1,7 @@
 # Discorda
 
+Veja também [transmissões simultâneas, cinema, tópicos, arquivos e salas temporárias](docs/community-features.md).
+
 Veja o [guia de uso da comunidade](docs/community.md) para alternar servidores, compartilhar convites, abrir transmissões em outra janela, ajustar acessibilidade e administrar canais, permissões e operação.
 
 Comunicação para grupos: chat, chamadas, câmera e compartilhamento de tela. Código sob [MIT](LICENSE). Electron/React no desktop; ASP.NET Core, PostgreSQL e LiveKit no servidor. O Supabase é usado **somente para login com Google**; mensagens e permissões ficam no seu PostgreSQL.
@@ -94,6 +96,8 @@ Compartilhe o IP Radmin do host e a identificação pública do certificado em u
 A qualidade depende de upload do host, conexão dos amigos, GPU e decodificação. LiveKit em Docker Desktop usa encaminhamento de portas; a validação real em duas máquinas é necessária. A configuração anuncia o IP Radmin do host para mídia. [Portas LiveKit](https://docs.livekit.io/transport/self-hosting/ports-firewall/).
 
 ## Operar, atualizar e fazer backup
+
+Consulte também [diagnóstico de chamadas e entrega segura de versões](docs/call-reliability.md) para o teste guiado, reconexão, indicadores de qualidade, painel de saúde e compatibilidade entre cliente e servidor.
 
 Veja [operação e recuperação](docs/selfhosting-operations.md): comandos para logs, backup, restore, renovação de certificado, troca de secrets, recuperação de administrador e migração do piloto antigo.
 

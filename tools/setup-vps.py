@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """Generate private Linux VPS configuration; never edits Caddy or starts services."""
 import getpass
+import copy
 import ipaddress
 import json
 import os
@@ -63,7 +64,11 @@ logging:
     reverse_proxy discorda-api:8080
 }}
 '''
-    return {'settings.json': json.dumps(settings, indent=2), 'livekit.yaml': livekit,
+    runtime_password = secrets.token_hex(32)
+    migration = copy.deepcopy(settings)
+    migration['Migration'] = {'RuntimeRole': 'discorda_runtime', 'RuntimePassword': runtime_password}
+    settings['ConnectionStrings']['Database'] = f'Host=postgres;Database=discorda;Username=discorda_runtime;Password={runtime_password};Maximum Pool Size=20'
+    return {'settings.json': json.dumps(settings, indent=2), 'migration.json': json.dumps(migration, indent=2), 'livekit.yaml': livekit,
             'postgres-password': password, 'compose.env': f'DISCORDA_PROXY_NETWORK={network}\n', 'Caddyfile.fragment': caddy}
 
 
@@ -92,7 +97,7 @@ def main():
         target = directory / name
         with target.open('x', encoding='utf-8') as output:
             output.write(text + '\n')
-        if name == 'settings.json':
+        if name in ('settings.json', 'migration.json', 'livekit.yaml'):
             # APP_UID in the .NET 10 Linux runtime image.
             os.chown(target, 1654, 1654)
             target.chmod(0o400)

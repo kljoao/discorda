@@ -58,6 +58,11 @@ $settings = @{
         Clusters=@{livekit=@{Destinations=@{local=@{Address='http://livekit:7880/'}}}}
     }
 }
+$runtimePassword = New-Secret
+$settings.Migration = @{RuntimeRole='discorda_runtime';RuntimePassword=$runtimePassword}
+$settings | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $directory 'migration.json') -Encoding utf8
+$settings.Remove('Migration')
+$settings.ConnectionStrings.Database="Host=postgres;Database=discorda;Username=discorda_runtime;Password=$runtimePassword;Maximum Pool Size=20"
 $settings | ConvertTo-Json -Depth 12 | Set-Content -LiteralPath (Join-Path $directory 'settings.json') -Encoding utf8
 $databasePassword | Set-Content -LiteralPath (Join-Path $directory 'postgres-password') -NoNewline -Encoding utf8
 "DISCORDA_HOST_IP=$HostIp" | Set-Content -LiteralPath (Join-Path $directory 'compose.env') -Encoding utf8

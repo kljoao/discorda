@@ -22,7 +22,9 @@ export async function listenForLogin(signal: AbortSignal, port = 3000, timeoutMs
     if (request.method !== 'GET' || request.headers.host !== `127.0.0.1:${actualPort}` || request.headers.origin) {
       response.writeHead(403).end(); return;
     }
-    const url = new URL(request.url ?? '/', `http://127.0.0.1:${actualPort}`);
+    let url: URL;
+    try { url = new URL(request.url ?? '/', `http://127.0.0.1:${actualPort}`); }
+    catch { response.writeHead(400).end(); return; }
     if (url.pathname !== route || settled) { response.writeHead(404).end(); return; }
     if (url.searchParams.has('error')) {
       response.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8' }).end('Login cancelado. Volte ao Discorda.');

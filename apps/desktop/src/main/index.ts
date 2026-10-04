@@ -52,9 +52,9 @@ else {
     const shortcuts=new Shortcuts(value=>{if(window&&!window.isDestroyed())window.webContents.send(IPC.shortcutEvent,value);});
     ipcMain.handle(IPC.shortcuts,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1)throw Error('IPC request rejected');shortcuts.configure(args[0]);});
     app.on('before-quit',()=>shortcuts.stop());
-    powerMonitor.on('suspend',()=>shortcuts.stop());
+    powerMonitor.on('suspend',()=>{shortcuts.stop();if(window&&!window.isDestroyed())window.webContents.send(IPC.powerState,'suspend');});
     const media = new MediaController(auth, () => window, development);
-    const updates=new Updates(()=>media.callActive);
+    const updates=new Updates(()=>media.callActive,async()=>apiOrigin?(await checkServices(apiOrigin)).serverProtocol:1);
     const updateTimer=setTimeout(()=>void updates.check(),30000);const updateInterval=setInterval(()=>void updates.check(),4*60*60*1000);
     app.on('before-quit',()=>{clearTimeout(updateTimer);clearInterval(updateInterval);});
     ipcMain.handle(IPC.updates,async(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||!['status','check','install','stable','beta'].includes(String(args[0])))throw new Error('IPC request rejected');if(args[0]==='stable'||args[0]==='beta')updates.setChannel(args[0]);if(args[0]==='check')void updates.check();if(args[0]==='install')await updates.install();return updates.snapshot();});
@@ -62,7 +62,7 @@ else {
     const live = new LiveChatClient(apiOrigin, () => auth.liveToken(), event => {
       if (window && !window.isDestroyed()) window.webContents.send(IPC.liveEvent, event);
     }, () => powerMonitor.getSystemIdleTime() >= 300,lan);
-    powerMonitor.on('resume',()=>{void live.reconnect();});
+    powerMonitor.on('resume',()=>{void live.reconnect();if(window&&!window.isDestroyed())window.webContents.send(IPC.powerState,'resume');});
     ipcMain.handle(IPC.reconnectLive,(event,...args:unknown[])=>{assertSender(event,args);return live.reconnect();});
     ipcMain.handle(IPC.diagnostics,async(event,...args:unknown[])=>{
       assertSender(event,[]);if(args.length!==1||!['status','export'].includes(String(args[0])))throw new Error('IPC request rejected');

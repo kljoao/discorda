@@ -11,20 +11,20 @@ $compose=Join-Path $testRoot 'infra/compose/selfhost.yml'
 name: $testId
 services:
   postgres:
-    image: postgres:17.9-alpine
+    image: postgres:17.11-alpine3.23
     environment:
       POSTGRES_DB: discorda
       POSTGRES_USER: discorda
       POSTGRES_HOST_AUTH_METHOD: trust
   api:
-    image: postgres:17.9-alpine
+    image: postgres:17.11-alpine3.23
     command: [sleep, infinity]
   livekit:
-    image: postgres:17.9-alpine
+    image: postgres:17.11-alpine3.23
     command: [sleep, infinity]
 "@|Set-Content $compose
 Set-Content (Join-Path $testRoot '.discorda/selfhost/settings.json') '{"Admin":{"Email":"fixture@example.test"}}'
-foreach($file in @('compose.env','postgres-password','server.pfx','livekit.yaml')){Set-Content (Join-Path $testRoot ('.discorda/selfhost/'+$file)) ''}
+foreach($file in @('compose.env','postgres-password','server.pfx','livekit.yaml','migration.json')){Set-Content (Join-Path $testRoot ('.discorda/selfhost/'+$file)) ''}
 function TestDocker([string[]]$a){$old=$ErrorActionPreference;try{$ErrorActionPreference='Continue';$r=& docker @a 2>&1;$code=$LASTEXITCODE}finally{$ErrorActionPreference=$old};if($code -ne 0){throw ($r|Out-String)};return $r}
 try{
  TestDocker @('compose','-f',$compose,'up','-d','postgres')|Out-Null

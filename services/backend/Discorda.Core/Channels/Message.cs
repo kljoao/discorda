@@ -2,6 +2,7 @@ namespace Discorda.Core.Channels;
 
 public sealed class Message
 {
+    public long? ThreadRootId { get; init; }
     public long Id { get; set; }
     public Guid ChannelId { get; init; }
     public Guid AuthorId { get; init; }

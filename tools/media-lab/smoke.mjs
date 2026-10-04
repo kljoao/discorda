@@ -1,5 +1,5 @@
 import { randomBytes, randomUUID } from 'node:crypto';
-import { mkdir, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile, chmod } from 'node:fs/promises';
 import { spawnSync, spawn } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { createServer } from 'node:http';
@@ -21,14 +21,17 @@ const roomName = `probe-${randomUUID()}`;
 const container = `discorda-media-${randomUUID().slice(0, 8)}`;
 const config = path.join(directory, 'livekit.yaml');
 const checkUi = process.argv.includes('--check-ui');
+const regression = process.argv.includes('--regression');
 const interactive = process.argv.includes('--interactive') || checkUi;
 const pagePaths = [`/${randomBytes(24).toString('hex')}/`, `/${randomBytes(24).toString('hex')}/`];
-const native = process.platform === 'win32';
-await writeFile(config, `port: 17880\nbind_addresses: ["${native ? '127.0.0.1' : '0.0.0.0'}"]\nrtc:\n  tcp_port: 17881\n  udp_port: 17882\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  enable_loopback_candidate: true\nkeys:\n  ${key}: ${secret}\nroom:\n  auto_create: false\nlogging:\n  level: warn\n`);
+const native = process.platform === 'win32' && !process.argv.includes('--docker');
+await writeFile(config, `port: 17880\nbind_addresses: ["${native ? '127.0.0.1' : '0.0.0.0'}"]\nrtc:\n  tcp_port: 17881\n  udp_port: 17882\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  enable_loopback_candidate: true\nkeys:\n  ${key}: ${secret}\nroom:\n  auto_create: false\nlogging:\n  level: ${process.argv.includes('--diagnose')?'info':'warn'}\n`);
+// The fixture stays in an owner-only host directory; its bind-mounted file is readable by the container UID.
+if (!native) { await chmod(directory, 0o700); await chmod(config, 0o644); }
 function docker(args, allowFailure = false) {
   const result = spawnSync('docker', args, { encoding: 'utf8', timeout: 120_000, windowsHide: true });
   if (result.status !== 0 && !allowFailure) throw new Error(`Docker failed: ${result.stderr?.slice(-1500) ?? result.error?.message}`);
-  return result.stdout;
+  return args[0]==='logs'?(result.stdout??'')+(result.stderr??''):result.stdout;
 }
 let browser, http, serverProcess;
 try {
@@ -38,7 +41,7 @@ try {
     if (!existsSync(executable)) throw new Error('Run powershell -File tools/media-lab/setup-windows.ps1 from the repository root first.');
     serverProcess = spawn(executable, ['--config', config], { windowsHide: true, stdio: 'ignore' });
     serverProcess.on('error', () => {});
-  } else docker(['run', '-d', '--rm', '--name', container, '-p', '127.0.0.1:17880:17880/tcp', '-p', '127.0.0.1:17881:17881/tcp', '-p', '127.0.0.1:17882:17882/udp', '--mount', `type=bind,source=${config},target=/etc/livekit.yaml,readonly`, 'livekit/livekit-server:v1.13.7', '--config', '/etc/livekit.yaml']);
+  } else docker(['run', '-d', '--rm', '--name', container, '--user', '1654:1654', '--cap-drop=ALL', '--security-opt=no-new-privileges:true', '-p', '127.0.0.1:17880:17880/tcp', '-p', '127.0.0.1:17881:17881/tcp', '-p', '127.0.0.1:17882:17882/udp', '--mount', `type=bind,source=${config},target=/etc/livekit.yaml,readonly`, 'livekit/livekit-server:v1.13.7', '--config', '/etc/livekit.yaml']);
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     try { ready = (await fetch('http://127.0.0.1:17880', { signal: AbortSignal.timeout(1000) })).ok; } catch { /* Starting. */ }
@@ -75,7 +78,9 @@ try {
     else response.writeHead(200, { 'Content-Type': 'text/html' }).end('<!doctype html><title>Discorda synthetic media lab</title><script src="/client.js"></script>');
   });
   await new Promise((resolve) => http.listen(0, '127.0.0.1', resolve));
-  browser = await chromium.launch({ channel: process.env.MEDIA_LAB_BROWSER ?? 'msedge', headless: !interactive || checkUi, args: ['--autoplay-policy=no-user-gesture-required'] });
+  // Isolated synthetic fixture only: grant device permissions to allow routable local ICE candidates.
+  // The desktop app and interactive hardware laboratory keep their normal privacy settings.
+  browser = await chromium.launch({ channel: process.env.MEDIA_LAB_BROWSER ?? 'msedge', headless: !interactive || checkUi, args: ['--autoplay-policy=no-user-gesture-required',...(!interactive?['--use-fake-device-for-media-stream','--use-fake-ui-for-media-stream']:[])] });
   if (interactive) {
     const contexts = await Promise.all(pagePaths.map(() => browser.newContext()));
     for (const [index, context] of contexts.entries()) {
@@ -112,7 +117,7 @@ try {
   } else {
   const pages = [];
   for (const [index, color] of ['#668800', '#006688'].entries()) {
-    const context = await browser.newContext();
+    const context = await browser.newContext({permissions:['microphone','camera']});
     const page = await context.newPage();
 
     await page.goto(`http://127.0.0.1:${http.address().port}`);
@@ -128,6 +133,26 @@ try {
     await new Promise((resolve) => setTimeout(resolve, 1000));
   }
   if (!samples.every((sample) => sample.audioBytes > 1000 && sample.videoBytes > 1000 && sample.framesDecoded > 10)) throw new Error(`Bidirectional media failed: ${JSON.stringify(samples)}`);
+  if(regression){
+    async function waitMedia(check){for(let i=0;i<30;i++){const values=await Promise.all(pages.map(page=>page.evaluate(()=>window.probeStats())));if(check(values))return;await new Promise(resolve=>setTimeout(resolve,500));}throw Error('Media regression did not reach the expected state.');}
+    await pages[0].evaluate(()=>window.startScreenProbe());
+    await waitMedia(values=>values[1].screenFrames>10&&values[1].screenAudioBytes>1000);
+    if(!await pages[0].evaluate(()=>window.muteProbe(true)))throw Error('Microphone mute failed.');
+    if(await pages[0].evaluate(()=>window.muteProbe(false)))throw Error('Microphone unmute failed.');
+    await pages[0].evaluate(()=>window.stopScreenProbe());
+    await waitMedia(values=>values[1].screenFrames===0&&values[1].screenAudioBytes===0);
+    await pages[0].evaluate(()=>window.reconnectProbe());
+    const before=await pages[1].evaluate(()=>window.probeStats());
+    await waitMedia(values=>values[1].audioBytes>before.audioBytes+1000&&values[1].framesDecoded>before.framesDecoded+10);
+    const nextRoom=roomName+'-next';await service.createRoom({name:nextRoom,maxParticipants:2,emptyTimeout:10});
+    for(const [index,page] of pages.entries()){
+      if(!await page.evaluate(()=>window.stopProbe()))throw Error('Capture remained active during channel change.');
+      const token=new AccessToken(key,secret,{identity:`synthetic-${index}`,ttl:'5m'});token.addGrant({roomJoin:true,room:nextRoom,canPublish:true,canSubscribe:true,canPublishData:false});
+      await page.evaluate(params=>window.startProbe(params),{url:'ws://127.0.0.1:17880',token:await token.toJwt(),color:'#445588'});
+    }
+    await waitMedia(values=>values.every(value=>value.participants===1&&value.audioBytes>1000&&value.framesDecoded>10));
+    console.log('Regression passed: microphone mute, screen plus audio, stop, signaling recovery and channel change.');
+  }
   const soakStart=Date.now();let checkpoints=0;let baseline=samples;
   if(soakMinutes>0)await pages[0].evaluate(()=>window.reconnectProbe());
   while(Date.now()-soakStart<soakMinutes*60000){
@@ -138,11 +163,14 @@ try {
   }
   const stopped = await Promise.all(pages.map((page) => page.evaluate(() => window.stopProbe())));
   if (!stopped.every(Boolean)) throw new Error('A synthetic capture track remained active after disconnect.');
-  const result = { testedAt: new Date().toISOString(), server: '1.13.7', soakMinutes, checkpoints, signalingReconnectExercised:soakMinutes>0, scope: 'loopback synthetic audio/video, two isolated browser contexts', samples, allTracksStopped: true, externalNetworksValidated: false, turnTlsValidated: false, physicalCaptureValidated: false };
+  const result = { testedAt: new Date().toISOString(), server: '1.13.7', soakMinutes, checkpoints, regression, signalingReconnectExercised:regression||soakMinutes>0, scope: 'loopback synthetic audio/video, two isolated browser contexts', samples, allTracksStopped: true, externalNetworksValidated: false, turnTlsValidated: false, physicalCaptureValidated: false };
   await writeFile(path.join(directory, 'result.json'), JSON.stringify(result, null, 2));
   console.log(JSON.stringify(result, null, 2));
   await service.deleteRoom(roomName);
   }
+} catch(error) {
+  if(!native){const logs=docker(['logs',container],true);await writeFile(path.join(directory,'docker-failure.log'),String(logs).split(secret).join('[redacted]').split(key).join('[redacted]'));}
+  throw error;
 } finally {
   await browser?.close();
   if (http) await new Promise((resolve) => http.close(resolve));

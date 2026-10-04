@@ -63,6 +63,10 @@ bash tools/vps.sh status
 
 O comando compila somente a API Discorda, espera o PostgreSQL, aplica migrations e inicia API/LiveKit. Em erro, não continue configurando o Caddy até corrigir. Consulte `bash tools/vps.sh logs`; não publique logs sem revisão.
 
+A API usa `discorda_runtime`, uma conta com acesso somente aos dados necessários. A conta administrativa fica em `migration.json`, montado apenas no serviço de migration; não copie esse arquivo para o container da API. Ao atualizar uma instalação gerada pelo assistente antigo, `start` separa automaticamente essas contas, sem apagar o banco. Configurações customizadas exigem a adaptação descrita no [relatório de segurança](security-audit.md). Preserve `migration.json` junto ao restante da configuração privada nos backups. Alterações de `Admin.Email` devem ser feitas em `settings.json` e `migration.json` antes de migrar/reiniciar.
+
+O PostgreSQL está fixado em `17.11-alpine3.23`, mantendo a mesma versão principal e família Alpine do ambiente anterior. A atualização reinicia o banco; reserve uma janela de manutenção. Não altere volumes nem use `down -v`. Extensões adicionais e índices customizados devem ser conferidos nas [notas oficiais do PostgreSQL 17.11](https://www.postgresql.org/docs/17/release-17-11.html).
+
 ## 5. Adicionar o subdomínio ao Caddy
 
 Faça uma cópia do Caddyfile original. Adicione uma única vez o conteúdo de `.discorda/vps/Caddyfile.fragment`, que equivale a:

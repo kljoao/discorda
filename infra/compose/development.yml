@@ -1,7 +1,7 @@
 name: discorda-dev
 services:
   postgres:
-    image: postgres:17.9-alpine
+    image: postgres:17.11-alpine3.23
     environment:
       POSTGRES_DB: discorda
       POSTGRES_USER: discorda_dev

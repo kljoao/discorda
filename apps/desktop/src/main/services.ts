@@ -23,6 +23,7 @@ export async function checkServices(origin?: string): Promise<ServiceStatus> {
       return false;
     }
   }
-  const [live, ready] = await Promise.all([check('/health/live'), check('/health/ready')]);
-  return { api: live ? 'online' : 'offline', database: ready ? 'ready' : 'unavailable', checkedAt };
+  async function protocol():Promise<number|undefined>{try{const response=await fetch(`${origin}/api/v1/compatibility`,{signal:AbortSignal.timeout(4000),redirect:'error'});if(!response.ok)return;const value=await response.json();if(Number.isSafeInteger(value.protocol)&&value.protocol>0&&value.protocol<=10000)return value.protocol;}catch{} }
+  const [live, ready,serverProtocol] = await Promise.all([check('/health/live'), check('/health/ready'),protocol()]);
+  return { api: live ? 'online' : 'offline', database: ready ? 'ready' : 'unavailable', checkedAt,serverProtocol };
 }

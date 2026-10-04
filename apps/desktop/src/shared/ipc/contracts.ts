@@ -7,21 +7,23 @@ export interface AppInfo {
 }
 
 export interface ServiceStatus {
+  serverProtocol?:number;
   api: 'online' | 'offline';
   database: 'ready' | 'unavailable';
   checkedAt: string;
 }
 
-export interface DiagnosticReport {performance?:{cpuPercent:number;memoryMiB:number;processes:number};version:string;platform:string;checkedAt:string;api:ServiceStatus['api'];database:ServiceStatus['database'];chat:'connected'|'reconnecting'|'offline';attempts:number;lastConnected?:string;callActive:boolean;update:UpdateState['status'];}
+export interface DiagnosticReport {serverProtocol?:number;performance?:{cpuPercent:number;memoryMiB:number;processes:number};version:string;platform:string;checkedAt:string;api:ServiceStatus['api'];database:ServiceStatus['database'];chat:'connected'|'reconnecting'|'offline';attempts:number;lastConnected?:string;callActive:boolean;update:UpdateState['status'];}
 export type ServerAction={kind:'list'|'invite'|'dismissInvite'}|{kind:'select'|'remove';id:string}|{kind:'rename';id:string;name:string};
 export interface ServerList {servers:{id:string;name:string;address:string;current:boolean}[];pendingInvite?:string;invite?:string}
-export type AdminAction={kind:'settings'|'users'|'network'|'firewall'|'operations'}|{kind:'setup';name:string;textChannels:string[];voiceChannels:string[]}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
-export interface ShortcutSettings {enabled:boolean;pushToTalk:boolean;mute:string;talk:string}
+export type AdminAction={kind:'settings'|'users'|'network'|'firewall'|'operations'|'operationsExport'}|{kind:'setup';name:string;textChannels:string[];voiceChannels:string[]}|{kind:'user';email:string;enabled:boolean}|{kind:'networkSave';addresses:string[]};
+export interface ShortcutSettings {enabled:boolean;pushToTalk:boolean;mute:string;talk:string;deafen?:string;cinema?:string}
 export interface DesktopApi {
+  onPowerState(listener:(state:'suspend'|'resume')=>void):()=>void;
   servers(action:ServerAction):Promise<ServerList>;
   onInvite(listener:()=>void):()=>void;
   shortcuts(settings:ShortcutSettings):Promise<void>;
-  onShortcut(listener:(event:'mute'|'unavailable'|boolean)=>void):()=>void;
+  onShortcut(listener:(event:'mute'|'deafen'|'cinema'|'unavailable'|boolean)=>void):()=>void;
   admin(action:AdminAction):Promise<ChatResult>;
   notifyMessage(channelId:string):Promise<void>;
   reconnectLive():Promise<void>;
@@ -64,7 +66,7 @@ export const IPC = {
   audioStatus:'media:audio-status', devicePermissions:'media:permissions', audioApplications:'media:applications', applicationAudio:'media:application-audio', applicationAudioData:'media:audio-data', applicationAudioEnd:'media:audio-end',
   microphoneTest: 'media:test', media: 'media:action', captureSources: 'media:sources', selectCapture: 'media:select',
   updates:'app:updates',importServer:'app:import-server',connectServer:'app:connect-server',appInfo: 'app:info',
-  services: 'app:check-services', admin:'admin:action',notifyMessage:'chat:notify', diagnostics:'app:diagnostics', reconnectLive:'live:reconnect',
+  powerState:'app:power-state',services: 'app:check-services', admin:'admin:action',notifyMessage:'chat:notify', diagnostics:'app:diagnostics', reconnectLive:'live:reconnect',
   authState: 'auth:state',
   signIn: 'auth:sign-in',
   cancelSignIn: 'auth:cancel',
@@ -73,24 +75,24 @@ export const IPC = {
   voiceActivity:'live:voice-activity', liveStart: 'live:start', liveStop: 'live:stop', liveActivity: 'live:activity', liveEvent: 'live:event',
 } as const;
 
-export interface ChatMessage { replyAuthorId?:string|null; id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
-export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Admin' | 'Moderator' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string }[]; }
+export interface ChatMessage { threadReplyCount?:number; threadRootId?:string|null; attachments?:{id:string;name:string;size:number}[]; replyAuthorId?:string|null; id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
+export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Admin' | 'Moderator' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string;temporary?:boolean }[]; }
 export type ManagementAction = {kind:'manageMembers'} | {kind:'audit';before?:string} | {kind:'role';userId:string;role:'Admin'|'Moderator'|'Member'} | {kind:'moderateVoice';userId:string;channelId?:string};
-export type ChatAction = {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
+export type ChatAction = {kind:'message';channelId:string;id:string} | {kind:'temporaryRoom';name:string} | {kind:'attachmentUpload';channelId:string;clientId:string} | {kind:'attachmentGet';channelId:string;id:string;preview?:boolean} | {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
   | {kind:'search';channelId:string;query:string;before?:string} | {kind:'pins';channelId:string;before?:string}
   | {kind:'annotations';channelId:string;ids:string[]} | {kind:'reaction';channelId:string;id:string;emoji:string;enabled:boolean}
   | {kind:'pin';channelId:string;id:string;enabled:boolean} | { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }
-  | { kind: 'history'; channelId: string; before?: string }
-  | { kind: 'send'; channelId: string; clientId: string; body: string; replyToId?: string }
+  | { kind: 'history'; channelId: string; before?: string; thread?:string }
+  | { kind: 'send'; channelId: string; clientId: string; body: string; replyToId?: string; threadRootId?:string }
   | { kind: 'edit'; channelId: string; id: string; version: number; body: string }
   | { kind: 'delete'; channelId: string; id: string; version: number };
 export type ChatResult = { ok: true; data: unknown } | { ok: false; message: string; status?:number };
 export interface PresenceMember { avatarUrl?:string|null; id: string; name: string; status: 'online' | 'away' | 'offline'; typingChannelId: string | null; }
 export interface VoiceMember { leaseId?:string; channelId: string; userId: string; name: string; }
-export type LiveEvent = {kind:'annotations';data:{channelId:string;id?:string}} | {kind:'moderation';data:{userId:string;channelId:string|null}} | {kind:'voice';data:{userId:string;leaseId:string;channelId:string;speaking:boolean}} | { kind: 'profile'; data: {userId: string; displayName: string} } | { kind: 'message'; data: ChatMessage } | {kind: 'channels'; data: {id: string}}
+export type LiveEvent = {kind:'thread';data:{channelId:string;id:string;count:number}} | {kind:'voiceRoster';data:VoiceMember[]} | {kind:'annotations';data:{channelId:string;id?:string}} | {kind:'moderation';data:{userId:string;channelId:string|null}} | {kind:'voice';data:{userId:string;leaseId:string;channelId:string;speaking:boolean}} | { kind: 'profile'; data: {userId: string; displayName: string} } | { kind: 'message'; data: ChatMessage } | {kind: 'channels'; data: {id: string}}
   | { kind: 'presence'; data: PresenceMember[] } | { kind: 'connection'; data: 'connected' | 'reconnecting' | 'offline' };
 
-export type MediaAction = { kind: "join"; channelId: string } | { kind: "pulse" | "leave"; channelId: string; leaseId: string };
+export type MediaAction = { kind: "join"; channelId: string } | { kind: "pulse" | "leave" | "ready"; channelId: string; leaseId: string };
 export interface CaptureSource { id: string; name: string; thumbnail: string; }
 export interface MediaGrant { leaseId: string; url: string; token: string; }
 

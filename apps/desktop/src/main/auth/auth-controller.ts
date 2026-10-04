@@ -13,6 +13,7 @@ export class AuthController {
   private cancellation?: AbortController;
   private loggingOut = false;
   private epoch = 0;
+  get contextVersion(){return this.epoch;}
   constructor(private readonly apiOrigin: string | undefined, private readonly vault: SessionVault) {}
 
   private async getClient(): Promise<SupabaseClient> {
@@ -122,12 +123,19 @@ export class AuthController {
       const { data, error } = await client.auth.getSession();
       if (error || !data.session || epoch !== this.epoch) return { ok: false, message: 'Entre novamente para acessar o grupo.' };
       const response = await fetch(`${this.apiOrigin}/api/v1/${area}${route}`, { method, body: body === undefined ? undefined : JSON.stringify(body),
-        headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(12000) });
+        headers: { Authorization: `Bearer ${data.session.access_token}`, 'Content-Type': 'application/json' }, redirect: 'error', signal: AbortSignal.timeout(route.includes('/attachments')?60000:12000) });
       if (epoch !== this.epoch) return { ok: false, message: 'A sessão foi encerrada.' };
       if (response.status === 401 || response.status === 403) return { ok: false, status:response.status, message: 'Acesso não autorizado. Verifique sua sessão.' };
+      if (response.status === 507) return {ok:false,status:507,message:'O servidor atingiu o limite de anexos. Peça ao administrador para liberar espaço.'};
+      if (response.status === 413) return {ok:false,status:413,message:'Arquivo acima do limite aceito pelo servidor.'};
       if (response.status === 409) return { ok: false, status:409, message: 'A mensagem mudou. Atualize o histórico e tente novamente.' };
       if (!response.ok) return { ok: false, status:response.status, message: 'Não foi possível concluir. Verifique os dados e tente novamente.' };
-      const result = response.status===204 ? null : response.headers.get('content-type')?.includes('application/json') ? await response.json() : await response.text();
+      let result:unknown=null;
+      if(response.status!==204){
+        const reader=response.body?.getReader();const chunks:Uint8Array[]=[];let size=0;
+        if(reader)try{while(true){const part=await reader.read();if(part.done)break;size+=part.value.length;if(size>16*1024*1024){await reader.cancel();throw Error('Response limit');}chunks.push(part.value);}}finally{reader.releaseLock();}
+        const text=Buffer.concat(chunks,size).toString('utf8');result=response.headers.get('content-type')?.includes('application/json')?JSON.parse(text):text;
+      }
       return epoch === this.epoch ? { ok: true, data: result } : { ok: false, message: 'A sessão foi encerrada.' };
     } catch { return { ok: false, message: 'Sem conexão com o servidor. Seu texto foi preservado para tentar novamente.' }; }
   }

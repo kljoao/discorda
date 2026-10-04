@@ -1,7 +1,21 @@
 import { describe, expect, it } from 'vitest';
 import { listenForLogin } from '../../src/main/auth/loopback';
+import { request } from 'node:http';
 
 describe('OAuth callback boundary', () => {
+  it('rejects malformed request targets without crashing or consuming the pending login', async () => {
+    const login = await listenForLogin(new AbortController().signal, 0, 3000);
+    try {
+      const origin = new URL(login.redirectTo);
+      const status = await new Promise<number | undefined>((resolve, reject) => {
+        const req = request({hostname: origin.hostname, port: origin.port, path: '//['}, response => {response.resume();resolve(response.statusCode);});
+        req.on('error', reject); req.end();
+      });
+      expect(status).toBe(400);
+      await fetch(login.redirectTo+'?code=valid-code');
+      expect(await login.code).toBe('valid-code');
+    } finally { login.close(); }
+  });
   it('does not consume a login for wrong paths, POST requests or missing codes', async () => {
     const login = await listenForLogin(new AbortController().signal, 0, 3000);
     try {

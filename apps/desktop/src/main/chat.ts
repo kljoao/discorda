@@ -1,6 +1,7 @@
 import type { ChatAction, ChatResult } from '../shared/ipc/contracts';
 import type { AuthController } from './auth/auth-controller';
 import { shell } from 'electron';
+import {attachmentAction} from './attachments';
 
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const id = /^[1-9][0-9]{0,18}$/;
@@ -21,22 +22,28 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
   if (a.kind === 'members' || a.kind === 'workspace' || a.kind === 'voiceRoster') return;
   if (a.kind === 'profile' && text(a.displayName, 32)) return;
   if (a.kind === 'renameWorkspace' && text(a.name,80) && !/[\p{Cc}\p{Cf}]/u.test(String(a.name))) return;
+  if (a.kind === 'temporaryRoom' && text(a.name,40)) return;
   if (a.kind === 'channel' && text(a.name, 80)) return;
   if (typeof a.channelId !== 'string' || !guid.test(a.channelId)) throw new Error('Invalid channel');
+  if(a.kind==='attachmentUpload'&&typeof a.clientId==='string'&&guid.test(a.clientId))return;
+  if(a.kind==='attachmentGet'&&typeof a.id==='string'&&guid.test(a.id)&&(a.preview===undefined||typeof a.preview==='boolean'))return;
+  if(a.kind==='message'&&numberId(a.id))return;
   if(a.kind==='read'&&numberId(a.id))return;
   if(a.kind==='pins'&&(a.before===undefined||numberId(a.before)))return;
   if(a.kind==='search'&&text(a.query,120)&&(a.before===undefined||numberId(a.before)))return;
   if(a.kind==='annotations'&&Array.isArray(a.ids)&&a.ids.length>0&&a.ids.length<=100&&a.ids.every(numberId))return;
   if(a.kind==='pin'&&numberId(a.id)&&typeof a.enabled==='boolean')return;
   if(a.kind==='reaction'&&numberId(a.id)&&typeof a.enabled==='boolean'&&['👍','❤️','😂','🎉','👀','🔥'].includes(String(a.emoji)))return;
-  if (a.kind === 'history' && (a.before === undefined || numberId(a.before))) return;
-  if (a.kind === 'send' && typeof a.clientId === 'string' && guid.test(a.clientId) && text(a.body, 4000) && (a.replyToId === undefined || numberId(a.replyToId))) return;
+  if (a.kind === 'history' && (a.thread===undefined||numberId(a.thread)) && (a.before === undefined || numberId(a.before))) return;
+  if (a.kind === 'send' && (a.threadRootId===undefined||numberId(a.threadRootId)) && typeof a.clientId === 'string' && guid.test(a.clientId) && text(a.body, 4000) && (a.replyToId === undefined || numberId(a.replyToId))) return;
   if ((a.kind === 'edit' || a.kind === 'delete') && numberId(a.id) && Number.isSafeInteger(a.version) && Number(a.version) > 0 && (a.kind === 'delete' || text(a.body, 4000))) return;
   throw new Error('Invalid chat request');
 }
 export async function chatAction(auth: AuthController, value: unknown): Promise<ChatResult> {
   validateChatAction(value);
   const action = value;
+  if(action.kind==='attachmentUpload'||action.kind==='attachmentGet')return attachmentAction(auth,action);
+  if(action.kind==='temporaryRoom')return auth.chatRequest('/temporary-rooms','POST',{name:action.name});
   if (action.kind === 'openLink') { await shell.openExternal(action.url); return { ok: true, data: null }; }
   if (action.kind === 'profile') return auth.chatRequest('/profile', 'PUT', {displayName: action.displayName});
   if (action.kind === 'members') return auth.chatRequest('/members');
@@ -53,9 +60,10 @@ export async function chatAction(auth: AuthController, value: unknown): Promise<
   if(action.kind==='search'||action.kind==='pins')return auth.chatRequest('/channels/'+action.channelId+'/'+action.kind+'?'+new URLSearchParams({...('query' in action?{q:action.query}:{}),...(action.before?{before:action.before}:{})}));
   if(action.kind==='annotations')return auth.chatRequest('/channels/'+action.channelId+'/annotations?ids='+action.ids.join(','));
   const route = `/channels/${action.channelId}/messages`;
+  if(action.kind==='message')return auth.chatRequest(route+'/'+action.id);
   if(action.kind==='reaction'||action.kind==='pin')return auth.chatRequest(route+'/'+action.id+'/'+action.kind,'PUT',{enabled:action.enabled,...(action.kind==='reaction'?{emoji:action.emoji}:{})});
-  if (action.kind === 'history') return auth.chatRequest(route + (action.before ? `?before=${action.before}` : ''));
-  if (action.kind === 'send') return auth.chatRequest(route, 'POST', { clientId: action.clientId, body: action.body, replyToId: action.replyToId });
+  if (action.kind === 'history') return auth.chatRequest(route + '?' + new URLSearchParams({...action.before?{before:action.before}:{},...action.thread?{thread:action.thread}:{}}));
+  if (action.kind === 'send') return auth.chatRequest(route, 'POST', { clientId: action.clientId, body: action.body, replyToId: action.replyToId, threadRootId:action.threadRootId });
   if (action.kind === 'edit') return auth.chatRequest(`${route}/${action.id}`, 'PUT', { body: action.body, version: action.version });
   return auth.chatRequest(`${route}/${action.id}?version=${action.version}`, 'DELETE');
 }
