@@ -24,8 +24,9 @@ const checkUi = process.argv.includes('--check-ui');
 const regression = process.argv.includes('--regression');
 const interactive = process.argv.includes('--interactive') || checkUi;
 const pagePaths = [`/${randomBytes(24).toString('hex')}/`, `/${randomBytes(24).toString('hex')}/`];
+const hostNetwork = process.platform === 'linux';
 const native = process.platform === 'win32' && !process.argv.includes('--docker');
-await writeFile(config, `port: 17880\nbind_addresses: ["${native ? '127.0.0.1' : '0.0.0.0'}"]\nrtc:\n  tcp_port: 17881\n  udp_port: 17882\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  enable_loopback_candidate: true\nkeys:\n  ${key}: ${secret}\nroom:\n  auto_create: false\nlogging:\n  level: ${process.argv.includes('--diagnose')?'info':'warn'}\n`);
+await writeFile(config, `port: 17880\nbind_addresses: ["${native || hostNetwork ? '127.0.0.1' : '0.0.0.0'}"]\nrtc:\n  tcp_port: 17881\n  udp_port: 17882\n  node_ip: 127.0.0.1\n  use_external_ip: false\n  enable_loopback_candidate: true\nkeys:\n  ${key}: ${secret}\nroom:\n  auto_create: false\nlogging:\n  level: ${process.argv.includes('--diagnose')?'info':'warn'}\n`);
 // The fixture stays in an owner-only host directory; its bind-mounted file is readable by the container UID.
 if (!native) { await chmod(directory, 0o700); await chmod(config, 0o644); }
 function docker(args, allowFailure = false) {
@@ -41,7 +42,7 @@ try {
     if (!existsSync(executable)) throw new Error('Run powershell -File tools/media-lab/setup-windows.ps1 from the repository root first.');
     serverProcess = spawn(executable, ['--config', config], { windowsHide: true, stdio: 'ignore' });
     serverProcess.on('error', () => {});
-  } else docker(['run', '-d', '--rm', '--name', container, '--user', '1654:1654', '--cap-drop=ALL', '--security-opt=no-new-privileges:true', '-p', '127.0.0.1:17880:17880/tcp', '-p', '127.0.0.1:17881:17881/tcp', '-p', '127.0.0.1:17882:17882/udp', '--mount', `type=bind,source=${config},target=/etc/livekit.yaml,readonly`, 'livekit/livekit-server:v1.13.7', '--config', '/etc/livekit.yaml']);
+  } else docker(['run', '-d', '--rm', '--name', container, '--user', '1654:1654', '--cap-drop=ALL', '--security-opt=no-new-privileges:true', ...(hostNetwork ? ['--network','host'] : ['-p', '127.0.0.1:17880:17880/tcp', '-p', '127.0.0.1:17881:17881/tcp', '-p', '127.0.0.1:17882:17882/udp']), '--mount', `type=bind,source=${config},target=/etc/livekit.yaml,readonly`, 'livekit/livekit-server:v1.13.7', '--config', '/etc/livekit.yaml']);
   let ready = false;
   for (let attempt = 0; attempt < 30; attempt++) {
     try { ready = (await fetch('http://127.0.0.1:17880', { signal: AbortSignal.timeout(1000) })).ok; } catch { /* Starting. */ }

@@ -2,7 +2,7 @@ import {chromium,expect,test} from '@playwright/test';
 import {createServer} from 'vite';
 
 test('real audio worklet passes quiet push-to-talk and recovers after replacing the input',async()=>{
-  const server=await createServer({server:{port:5185,strictPort:true}});
+  const server=await createServer({cacheDir:"node_modules/.vite-e2e-microphone",optimizeDeps:{entries:["index.html"]},server:{port:5185,strictPort:true}});
   await server.listen();
   const browser=await chromium.launch({channel:'msedge',headless:true,args:['--autoplay-policy=no-user-gesture-required']});
   try{

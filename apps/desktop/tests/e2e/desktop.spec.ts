@@ -64,7 +64,7 @@ test('built desktop loads with a sandboxed preload and functional health action'
 
 test('development renderer loads through Vite with its development CSP', async () => {
   test.skip(Boolean(process.env.DISCORDA_E2E_EXECUTABLE), 'Development mode only');
-  const server = await createServer();
+  const server = await createServer({cacheDir:"node_modules/.vite-e2e-desktop",optimizeDeps:{entries:["index.html"]}});
   await server.listen();
   const env = Object.fromEntries(Object.entries(process.env).filter((entry): entry is [string, string] => entry[1] !== undefined));
   delete env.ELECTRON_RUN_AS_NODE;

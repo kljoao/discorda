@@ -1,7 +1,7 @@
 import {chromium,expect,test} from '@playwright/test';
 import {createServer} from 'vite';
 test('stream popout displays video without duplicating audio and closes when removed',async()=>{
- const server=await createServer({server:{port:5186,strictPort:true}});await server.listen();
+ const server=await createServer({cacheDir:"node_modules/.vite-e2e-stream",optimizeDeps:{entries:["tests/e2e/stream.fixture.html"]},server:{port:5186,strictPort:true}});await server.listen();
  const browser=await chromium.launch({channel:'msedge',headless:true});
  try{
   const page=await browser.newPage();await page.goto('http://localhost:5186/tests/e2e/stream.fixture.html');

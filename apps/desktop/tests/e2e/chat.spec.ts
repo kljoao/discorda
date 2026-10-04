@@ -3,7 +3,7 @@ import { createServer } from 'vite';
 
 test('chat preserves retry identity, edits, replies, deletion and channel creation', async () => {
   test.setTimeout(60000);
-  const server = await createServer({ server: { port: 5183, strictPort: true } });
+  const server = await createServer({ cacheDir:"node_modules/.vite-e2e-chat", optimizeDeps:{entries:["index.html"]}, server: { port: 5183, strictPort: true } });
   await server.listen();
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
