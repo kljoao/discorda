@@ -1,1 +1,1 @@
-export const updatePublicKey="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEAfSlyv5T0At520tJr2j7TaxKu2g1GJzrkTRCBkphf1Jw=\n-----END PUBLIC KEY-----\n";
+export const updatePublicKey="-----BEGIN PUBLIC KEY-----\nMCowBQYDK2VwAyEA2kM/By7aepziKMiq1PgbE2ZZ/y+i6q/QTuluidq1ka8=\n-----END PUBLIC KEY-----\n";
