@@ -45,10 +45,12 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   const [shortcuts,setShortcuts]=useState(readShortcuts);
   const [processor] = useState(() => new MicrophoneProcessor(microphone));
   const [cinema,setCinema]=useState(false);
+  const [reconnecting,setReconnecting]=useState(false);
+  const previousParticipants=useRef<Participant[]>([]);
   const [watching,setWatching]=useState<Set<string>>(()=>new Set());
   const watchingRef=useRef(new Set<string>());
   const [creatingRoom,setCreatingRoom]=useState(false);
-  useEffect(()=>{if(!cinema)return;const escape=(e:KeyboardEvent)=>{if(e.key==='Escape')setCinema(false);};window.addEventListener('keydown',escape);return()=>window.removeEventListener('keydown',escape);},[cinema]);
+  useEffect(()=>{if(!cinema)return;const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!document.fullscreenElement)setCinema(false);};window.addEventListener('keydown',escape);return()=>window.removeEventListener('keydown',escape);},[cinema]);
   const preferredInput=useRef(microphone.deviceId);
   function configureMicrophone(settings: MicrophoneSettings,preservePreferred=false) {if(!preservePreferred&&settings.deviceId!==microphone.deviceId)preferredInput.current=settings.deviceId;setMicrophone(settings);processor.configure({...settings,pushToTalk:shortcuts.enabled&&shortcuts.pushToTalk});try{localStorage.setItem('discorda:microphone',JSON.stringify({...settings,deviceId:preferredInput.current}));}catch{/* In-memory preferences still work. */}}
   useEffect(()=>{processor.onLevel=setLevel;return()=>{processor.onLevel=undefined;};},[processor]);
@@ -120,17 +122,17 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   const lastAck=useRef(0),recovering=useRef(false);
   async function recoverCall(){
     const current=active.current;if(!current||recovering.current)return;
-    recovering.current=true;const target=current.channel,mic=current.room.localParticipant.isMicrophoneEnabled&&!soundPreferences.current.deaf;
+    recovering.current=true;setReconnecting(true);const target=current.channel,mic=current.room.localParticipant.isMicrophoneEnabled&&!soundPreferences.current.deaf;
     const cleanup=leave(true);const ticket=generation.current;await cleanup.catch(()=>{});
     if(!mounted.current||generation.current!==ticket)return;
     setChannel(target);setStatus('Reconectando…');
-    recovery.current.start(()=>recoveryJoin.current(target,mic),()=>{recovering.current=false;setChannel(undefined);setStatus('');setError('Não foi possível recuperar a chamada. Entre novamente quando a conexão voltar.');},(attempt,delay)=>{if(mounted.current){setChannel(target);setStatus(!navigator.onLine?'Sem rede · aguardando conexão':delay?`Reconectando · nova tentativa em ${delay/1000}s`:`Reconectando · tentativa ${attempt} de 8`);}},()=>navigator.onLine);
+    recovery.current.start(()=>recoveryJoin.current(target,mic),()=>{recovering.current=false;setReconnecting(false);setChannel(undefined);setStatus('');setError('Não foi possível recuperar a chamada. Entre novamente quando a conexão voltar.');},(attempt,delay)=>{if(mounted.current){setChannel(target);setStatus(!navigator.onLine?'Sem rede · aguardando conexão':delay?`Reconectando · nova tentativa em ${delay/1000}s`:`Reconectando · tentativa ${attempt} de 8`);}},()=>navigator.onLine);
   }
   async function leave(preserveRecovery=false) {
     if(!preserveRecovery){recovery.current.cancel();recovering.current=false;if(mounted.current){try{localStorage.removeItem(callKey);}catch{}setResumeChannel(undefined);}}
     generation.current++;
     const current = active.current; active.current = undefined;
-    if (mounted.current) { watchingRef.current=new Set();setWatching(new Set());setCinema(false);setRoom(undefined); setChannel(undefined); setOpen(false); setSources(undefined);setShareMenu(false); if(!preserveRecovery)setDeaf(false); setStatus(''); setLevel({db:-90,open:false}); }
+    if (mounted.current) { if(!preserveRecovery){watchingRef.current=new Set();setWatching(new Set());setReconnecting(false);previousParticipants.current=[];}setCinema(false);setRoom(undefined); setChannel(undefined);if(!preserveRecovery)setOpen(false);setSources(undefined);setShareMenu(false); if(!preserveRecovery)setDeaf(false); setStatus(''); setLevel({db:-90,open:false}); }
     current?.subscriptions?.stop();
     const wasConnected=current?.sounds?.stop();
     const goodbye=wasConnected&&mounted.current&&!preserveRecovery?notify(current?.playback,'leave'):undefined;
@@ -177,7 +179,7 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
     setAudioSettings(false);
     await leave(retry);
     const epoch = generation.current;
-    setStatus('Entrando…'); setChannel(next); setOpen(false);
+    setStatus('Entrando…');setChannel(next);if(!retry)setOpen(false);
     const nextRoom = new Room({ adaptiveStream: true, dynacast: true, audioCaptureDefaults: { echoCancellation: true, noiseSuppression: microphone.noiseSuppression!==false, autoGainControl: true, deviceId:microphone.deviceId || undefined }, videoCaptureDefaults: { resolution: {width: 1280, height: 720, frameRate: 30} } });
     const current = { room: nextRoom, channel: next, joined:false, playback:new VoicePlayback(), grant: undefined as MediaGrant | undefined, sounds:undefined as ReturnType<typeof bindCallSounds>|undefined, subscriptions:undefined as ReturnType<typeof bindStreamSubscriptions>|undefined };
     active.current = current;
@@ -188,10 +190,11 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
       if(active.current!==current)return;
       const next=new Set(watchingRef.current);keys.forEach(key=>next.delete(key));watchingRef.current=next;setWatching(next);
     });
-    nextRoom.on(RoomEvent.TrackSubscriptionFailed,()=>{if(active.current===current)setError('Não foi possível receber a transmissão. Pare de visualizar e tente assistir novamente.');});
+    current.subscriptions.update(watchingRef.current);
+    nextRoom.on(RoomEvent.TrackSubscriptionFailed,()=>{if(active.current===current)setError('A transmissão está indisponível no momento. A visualização será retomada quando a conexão voltar.');});
     nextRoom.on(RoomEvent.LocalTrackUnpublished,p=>{if(p.source===Track.Source.ScreenShare){setShareMenu(false);void stopApplication();}});
-    nextRoom.on(RoomEvent.Reconnecting, () => { if (active.current === current) setStatus('Reconectando…'); });
-    nextRoom.on(RoomEvent.Reconnected, () => { if (active.current === current) setStatus('Conectado'); });
+    nextRoom.on(RoomEvent.Reconnecting, () => { if (active.current === current) {setStatus('Reconectando…');setReconnecting(true);} });
+    nextRoom.on(RoomEvent.Reconnected, () => { if (active.current === current) {setStatus('Conectado');setReconnecting(false);} });
     nextRoom.on(RoomEvent.MediaDevicesError,error=>{if(active.current===current)setError(mediaErrorMessage(error));});
     nextRoom.on(RoomEvent.SignalReconnecting,()=>{if(active.current===current)setStatus('Reconectando…');});
     nextRoom.on(RoomEvent.Disconnected, reason => { if (active.current === current && current.joined) { if(canRecover(reason))void recoverCall();else{void leave();if(mounted.current)setError('A chamada foi encerrada pelo servidor.');} } });
@@ -206,7 +209,7 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
       current.subscriptions.sync();
       // Join with all capture off. Buttons explicitly enable each device.
       if (epoch !== generation.current || !mounted.current) { await nextRoom.disconnect(true); return false; }
-      setRoom(nextRoom); if(!retry)setOpen(true); setStatus('Conectado'); await nextRoom.startAudio();await current.playback.resume();if(outputDevice)try{await current.playback.output(outputDevice);}catch{await current.playback.output('');setError('Saída salva indisponível. Usando o padrão do Windows.');}
+      setRoom(nextRoom);if(!retry)setOpen(true);setReconnecting(false);setStatus('Conectado'); await nextRoom.startAudio();await current.playback.resume();if(outputDevice)try{await current.playback.output(outputDevice);}catch{await current.playback.output('');setError('Saída salva indisponível. Usando o padrão do Windows.');}
       try{localStorage.setItem(callKey,next.id);}catch{}setResumeChannel(undefined);
       current.joined=true;void window.discorda?.media({kind:'ready',channelId:next.id,leaseId:current.grant.leaseId}).catch(()=>{});lastAck.current=Date.now();current.sounds.start();recovering.current=false;return true;
     } catch (e) { if (active.current === current) await leave(retry); throw e; }
@@ -217,14 +220,15 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   useEffect(()=>{if(!room)return;let alive=true,pending=false;const refresh=async()=>{if(pending)return;pending=true;try{const devices=await navigator.mediaDevices.enumerateDevices();if(!alive)return;setDevices(devices);const defaultOutput=devices.find(d=>d.kind==='audiooutput'&&d.deviceId==='default')?.label;if(defaultOutput){if(!outputDevice&&lastDefaultOutput.current&&lastDefaultOutput.current!==defaultOutput)setError('O Windows alterou a saída padrão. Confira o som nos seus fones.');lastDefaultOutput.current=defaultOutput;}await active.current?.playback?.resume();if(outputDevice&&!devices.some(d=>d.kind==='audiooutput'&&d.deviceId===outputDevice)){await active.current?.playback?.output('');setOutputDevice('');setError('Fones desconectados. Som transferido para a saída padrão do Windows.');}const track=room.localParticipant.getTrackPublication(Track.Source.Microphone)?.track;const input=track instanceof LocalAudioTrack?track.getSourceTrackSettings().deviceId||microphone.deviceId:'';if(track instanceof LocalAudioTrack&&input&&!devices.some(d=>d.kind==='audioinput'&&d.deviceId===input)){await track.mute();configureMicrophone({...microphone,deviceId:''},true);await room.switchActiveDevice('audioinput','default');setError('Microfone desconectado. Padrão do Windows selecionado e silenciado; clique para ligar.');}else if(preferredInput.current&&microphone.deviceId!==preferredInput.current&&devices.some(d=>d.kind==='audioinput'&&d.deviceId===preferredInput.current)){if(track instanceof LocalAudioTrack)await track.mute();await room.switchActiveDevice('audioinput',preferredInput.current);configureMicrophone({...microphone,deviceId:preferredInput.current});setError('Microfone preferido reconectado. Clique para ligar quando estiver pronto.');}if(preferredOutput.current&&outputDevice!==preferredOutput.current&&devices.some(d=>d.kind==='audiooutput'&&d.deviceId===preferredOutput.current)){await active.current?.playback?.output(preferredOutput.current);setOutputDevice(preferredOutput.current);setError('Seus fones preferidos voltaram. Saída de áudio restaurada.');}}catch{if(alive)setError('Dispositivo indisponível. Selecione outra entrada ou saída.');}finally{pending=false;}};void refresh();navigator.mediaDevices.addEventListener('devicechange',refresh);return()=>{alive=false;navigator.mediaDevices.removeEventListener('devicechange',refresh);};},[room,outputDevice,microphone]);
   const local = room?.localParticipant;
   useEffect(()=>{setPrivateSharing(!!local?.isScreenShareEnabled);return()=>setPrivateSharing(false);},[local?.isScreenShareEnabled]);
-  const participants = room ? [room.localParticipant, ...room.remoteParticipants.values()].sort((a,b)=>comparePeople(a.name??"",a.identity,b.name??"",b.identity)) : [];
+  const participants = room ? [room.localParticipant, ...room.remoteParticipants.values()].sort((a,b)=>comparePeople(a.name??"",a.identity,b.name??"",b.identity)) : reconnecting?previousParticipants.current:[];
+  if(room)previousParticipants.current=participants;
   const participantsByLease=new Map(participants.map(p=>[p.identity,p]));
   function watchStream(key:string) {
     if(watchingRef.current.has(key)||!room)return;
     const exists=[...room.remoteParticipants.values()].some(p=>[...p.videoTrackPublications.values()].some(publication=>publication.source===Track.Source.ScreenShare&&streamKey(p,publication)===key));
     if(!exists)return;
     const next=new Set(watchingRef.current);next.add(key);watchingRef.current=next;setWatching(next);
-    active.current?.subscriptions?.update(next);void notify(active.current?.playback,'watch');
+    active.current?.subscriptions?.update(next);void active.current?.playback?.resume().catch(()=>setError('Clique novamente para ativar o áudio da transmissão.'));void room.startAudio().catch(()=>{});void notify(active.current?.playback,'watch');
   }
   function stopWatching(keys:string[]) {
     const next=new Set(watchingRef.current);let changed=false;
@@ -315,8 +319,8 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
       <div className="personal-controls"><div className="self-profile"><Avatar url={self?.avatarUrl} name={self?.name??'Você'}/><span><strong title={self?.name}>{self?.name??'Você'}</strong><small>{channel?'Em voz':'Disponível'}</small></span></div><div className="split-control"><button disabled={!local||busy||deaf||testing} className={local?.isMicrophoneEnabled?'':'is-off'} title={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} aria-label={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} onClick={()=>void perform(toggleMicrophone)}>{local?.isMicrophoneEnabled?<Mic size={18}/>:<MicOff size={18}/>}</button><button aria-label="Selecionar microfone" aria-expanded={deviceMenu==='audioinput'} onClick={()=>{setDeviceMenu(deviceMenu==='audioinput'?undefined:'audioinput');void refreshDevices().catch(()=>setError('Não foi possível listar microfones.'));}}>{deviceMenu==='audioinput'?<ChevronDown size={12}/>:<ChevronUp size={12}/>}</button></div><div className="split-control"><button disabled={!local||busy} title={deaf?'Voltar a ouvir':'Ensurdecer'} aria-label={deaf?'Voltar a ouvir':'Ensurdecer'} aria-pressed={deaf} onClick={()=>void perform(async()=>{if(!deaf)await local!.setMicrophoneEnabled(false);setDeaf(!deaf);})}>{deaf?<VolumeX size={18}/>:<Headphones size={18}/>}</button><button aria-label="Selecionar saída de áudio" aria-expanded={deviceMenu==='audiooutput'} onClick={()=>{setDeviceMenu(deviceMenu==='audiooutput'?undefined:'audiooutput');void refreshDevices().catch(()=>setError('Não foi possível listar saídas de áudio.'));}}>{deviceMenu==='audiooutput'?<ChevronDown size={12}/>:<ChevronUp size={12}/>}</button></div><button title="Configurações" aria-label="Ajustar microfone" onClick={()=>{setDeviceMenu(undefined);setSettingsTab('audio');setAudioSettings(true);void refreshDevices().catch(()=>{});}}><Settings size={18}/></button></div>
       {deviceMenu&&<div className="device-menu" onKeyDown={event=>{if(event.key==='Escape'){setDeviceMenu(undefined);}}} role="dialog" aria-label={deviceMenu==='audioinput'?'Dispositivo de entrada':'Dispositivo de saída'}><div><strong>{deviceMenu==='audioinput'?'Microfone':'Saída de áudio'}</strong><button aria-label="Fechar dispositivos" onClick={()=>setDeviceMenu(undefined)}><X size={15}/></button></div><select aria-label={deviceMenu==='audioinput'?'Escolher microfone':'Escolher saída'} value={deviceMenu==='audioinput'?microphone.deviceId:outputDevice} onChange={e=>void perform(()=>chooseDevice(deviceMenu,e.target.value))}><option value="">Padrão do Windows</option>{devices.filter(d=>d.kind===deviceMenu&&d.deviceId).map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Dispositivo de áudio'}</option>)}</select></div>}
     </div>,dockHost)}
-    {mediaHost&&room&&createPortal(<VoiceStage name={channel?.name??'Chamada'} participants={participants} watching={watching}
-      busy={busy} deaf={deaf} testing={testing} expanded={cinema} volumes={volumes} memberKey={memberKey}
+    {mediaHost&&(room||reconnecting)&&createPortal(<VoiceStage name={channel?.name??'Chamada'} participants={participants} watching={watching}
+      busy={busy||reconnecting} reconnecting={reconnecting} deaf={deaf} testing={testing} expanded={cinema} volumes={volumes} memberKey={memberKey}
       avatar={p=>presenceById.get(memberKey(p))?.avatarUrl??(p.isLocal?self?.avatarUrl:undefined)}
       onWatch={watchStream} onStopWatching={stopWatching} onVolume={(id,value)=>changeVolume(id,'screen',value)} onMute={muteScreen}
       onMemberVolume={(p,event)=>openVolume(memberKey(p),p.name||'Participante',event.clientX,event.clientY)}

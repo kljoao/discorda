@@ -22,7 +22,7 @@ export class ApplicationAudio {
   }
   async start(id:unknown):Promise<void> {
     if(!this.authorized() || typeof id!=='string' || (id!=='system' && id!=='system-no-browser' && (!this.apps.has(id) || !/^\d+:\d+$/.test(id))))throw new Error('Selecione um aplicativo de áudio válido.');
-    this.stop();const epoch=this.epoch;
+    this.stop(false);const epoch=this.epoch;
     const child=spawn(this.executable(),id==='system'||id==='system-no-browser'?['system',String(process.pid),...(id==='system-no-browser'?['no-browsers']:[])]:['capture',id],{windowsHide:true,stdio:'pipe'});this.child=child;child.stdin.on('error',()=>{});this.heartbeat=Date.now()+15000;
     let pending=Buffer.alloc(0);
     child.stdout.on('data',(chunk:Buffer)=>{
@@ -44,6 +44,6 @@ export class ApplicationAudio {
   }
   private notifyEnd(){const window=this.window();if(window&&!window.isDestroyed())window.webContents.send(IPC.applicationAudioEnd);}
   pulse(){if(this.child)this.heartbeat=Date.now();}
-  stop(){this.epoch++;const child=this.child;this.child=undefined;if(this.timer)clearInterval(this.timer);this.timer=undefined;
-    if(child){this.notifyEnd();child.stdin.end('\n');const timer=setTimeout(()=>child.kill(),3000);timer.unref();child.once('exit',()=>clearTimeout(timer));}}
+  stop(notify=true){this.epoch++;const child=this.child;this.child=undefined;if(this.timer)clearInterval(this.timer);this.timer=undefined;
+    if(child){if(notify)this.notifyEnd();child.stdin.end('\n');const timer=setTimeout(()=>child.kill(),3000);timer.unref();child.once('exit',()=>clearTimeout(timer));}}
 }

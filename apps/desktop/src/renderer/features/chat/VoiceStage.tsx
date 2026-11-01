@@ -1,5 +1,5 @@
 import {useEffect,useRef,useState,type CSSProperties,type MouseEvent} from 'react';
-import {Track,type Participant,type RemoteTrackPublication} from 'livekit-client';
+import {Track,type Participant,type RemoteTrackPublication,type TrackPublication} from 'livekit-client';
 import {Columns2,EyeOff,Focus,LayoutGrid,Maximize2,Mic,MicOff,Minimize2,Monitor,MonitorUp,PhoneOff,Pin,PinOff,Play,Users,Video,VideoOff} from 'lucide-react';
 import {Avatar} from './Avatar';
 import {StreamWindow} from './StreamWindow';
@@ -11,7 +11,7 @@ import './voice-stage.css';
 
 type Layout='focus'|'overview'|'mosaic';
 type Props={
-  name:string;participants:Participant[];watching:ReadonlySet<string>;busy:boolean;deaf:boolean;testing:boolean;expanded:boolean;
+  name:string;reconnecting?:boolean;participants:Participant[];watching:ReadonlySet<string>;busy:boolean;deaf:boolean;testing:boolean;expanded:boolean;
   volumes:Record<string,MemberVolume>;memberKey:(participant:Participant)=>string;avatar:(participant:Participant)=>string|null|undefined;
   onWatch:(key:string)=>void;onStopWatching:(keys:string[])=>void;onVolume:(id:string,value:number)=>void;onMute:(id:string)=>void;
   onMemberVolume:(participant:Participant,event:MouseEvent)=>void;
@@ -37,12 +37,18 @@ function useGrid(count:number) {
 
 export function VoiceStage(props:Props) {
   const {participants,watching,busy}=props,local=participants.find(participant=>participant.isLocal);
+  const streamElements=useRef(new Map<string,HTMLElement>());
+  const catalog=useRef(new Map<string,{participant:Participant;publication:TrackPublication;key:string}>());
   const roomRef=useRef<HTMLElement>(null),idle=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   const [layout,setLayout]=useState<Layout>('focus'),[focus,setFocus]=useState<string[]>([]),[preview,setPreview]=useState<string[]>([]);
   const [awake,setAwake]=useState(true),[fullscreen,setFullscreen]=useState(false),[fullscreenError,setFullscreenError]=useState('');
-  const streams=participants.flatMap(participant=>[...participant.videoTrackPublications.values()]
+  const currentStreams=participants.flatMap(participant=>[...participant.videoTrackPublications.values()]
     .filter(publication=>publication.source===Track.Source.ScreenShare)
     .map(publication=>({participant,publication,key:streamKey(participant,publication)})));
+  const currentKeys=new Set(currentStreams.map(stream=>stream.key));
+  currentStreams.forEach(stream=>catalog.current.set(stream.key,stream));
+  for(const key of catalog.current.keys())if(!currentKeys.has(key)&&!watching.has(key))catalog.current.delete(key);
+  const streams=[...currentStreams.map(stream=>({...stream,pending:false})),...[...catalog.current.values()].filter(stream=>!currentKeys.has(stream.key)&&watching.has(stream.key)).map(stream=>({...stream,pending:true}))];
   const available=streams.filter(stream=>stream.participant.isLocal||watching.has(stream.key));
   const selected=focus.filter(key=>available.some(stream=>stream.key===key));
   const focused=selected.length?selected:available.slice(-1).map(stream=>stream.key);
@@ -54,11 +60,11 @@ export function VoiceStage(props:Props) {
   function wake(){setAwake(true);clearTimeout(idle.current);idle.current=setTimeout(()=>setAwake(false),2400);}
   useEffect(()=>{wake();return()=>clearTimeout(idle.current);},[]);
   useEffect(()=>{
-    const changed=()=>setFullscreen(document.fullscreenElement===roomRef.current);
+    const changed=()=>setFullscreen([...streamElements.current.values()].some(element=>document.fullscreenElement===element));
     document.addEventListener('fullscreenchange',changed);return()=>document.removeEventListener('fullscreenchange',changed);
   },[]);
-  async function maximize(){
-    try {setFullscreenError('');if(document.fullscreenElement)await document.exitFullscreen();else await roomRef.current?.requestFullscreen();}
+  async function maximize(key:string){
+    try {setFullscreenError('');if(document.fullscreenElement)await document.exitFullscreen();else await streamElements.current.get(key)?.requestFullscreen({navigationUI:'hide'});}
     catch {setFullscreenError('Não foi possível abrir em tela cheia. Tente novamente.');}
   }
   function start(key:string){props.onWatch(key);setFocus(previous=>[...previous.filter(item=>available.some(stream=>stream.key===item)),key]);setLayout('focus');wake();}
@@ -79,25 +85,26 @@ export function VoiceStage(props:Props) {
     </div>;
   }
   return <section ref={roomRef} className={'voice-room'+(props.expanded?' cinema-mode':'')+(awake?' controls-awake':'')} aria-label={'Chamada '+props.name} data-layout={mode} onPointerMove={wake} onPointerEnter={wake} onPointerLeave={()=>{clearTimeout(idle.current);setAwake(false);}}>
-    <header className="room-header room-hover-control"><div><Users size={16}/><strong>{props.name}</strong><span>{participants.length} participantes</span></div><div className="room-layouts" role="group" aria-label="Organizar a sala">
-      <button type="button" className="room-icon-button" disabled={!available.length} aria-label="Foco nas transmissões" title="Foco nas transmissões" aria-pressed={mode==='focus'} onClick={()=>{setLayout('focus');wake();}}><Focus size={18}/></button>
+    <header className="room-header room-hover-control"><div><Users size={16}/><strong>{props.name}</strong><span>{participants.length} participantes</span></div></header>
+    {mode==='overview'&&<div className="room-layouts room-hover-control" role="group" aria-label="Organizar a sala">
+      <button type="button" className="room-icon-button" disabled={!available.length} aria-label="Foco nas transmissões" title="Foco nas transmissões" aria-pressed={false} onClick={()=>{setLayout('focus');wake();}}><Focus size={18}/></button>
       <button type="button" className="room-icon-button" aria-label="Visão global" title="Visão global" aria-pressed={mode==='overview'} onClick={()=>{setLayout('overview');wake();}}><LayoutGrid size={18}/></button>
-      <button type="button" className="room-icon-button" disabled={!available.length} aria-label="Mosaico de transmissões" title="Mosaico de transmissões" aria-pressed={mode==='mosaic'} onClick={()=>{setLayout('mosaic');wake();}}><Columns2 size={18}/></button>
+      <button type="button" className="room-icon-button" disabled={!available.length} aria-label="Mosaico de transmissões" title="Mosaico de transmissões" aria-pressed={false} onClick={()=>{setLayout('mosaic');wake();}}><Columns2 size={18}/></button>
       <span className="room-control-divider"/>
       <button type="button" className="room-icon-button" aria-label={props.expanded?'Sair do cinema (Esc)':'Modo cinema'} title={props.expanded?'Sair do cinema (Esc)':'Modo cinema'} onClick={props.onExpand}>{props.expanded?<Minimize2 size={18}/>:<Maximize2 size={18}/>}</button>
-    </div></header>
+    </div>}
     <div className="room-canvas" ref={grid.ref} style={grid.style}>
-      {streams.map(({participant,publication,key})=>{
-        const name=participant.name||'Participante',own=participant.isLocal,watch=own||watching.has(key),playing=watch&&(!own||preview.includes(key));
+      {streams.map(({participant,publication,key,pending})=>{
+        const name=participant.name||'Participante',own=participant.isLocal,watch=own||watching.has(key),playing=watch&&!pending&&(!own||preview.includes(key));
         const id=props.memberKey(participant),volume=props.volumes[id]??defaultVolume;
-        return <article key={key} className={'room-stream'+(watch?' is-watching':' is-invitation')} hidden={!shownKeys.has(key)} aria-label={'Transmissão de '+name}>
-          {playing&&publication.track&&!publication.isMuted?<><TrackVideo track={publication.track} screen publication={!own?publication as RemoteTrackPublication:undefined}/><button type="button" className="room-video-toggle" aria-label={mode==='overview'?'Focar transmissão de '+name:'Ver visão global da sala'} onClick={()=>mode==='overview'?spotlight(key):(setLayout('overview'),wake())}/></>:<div className="room-stream-placeholder"><Monitor size={32}/>{own?<><strong>Sua transmissão está ao vivo</strong><p>A prévia está pausada para economizar recursos.</p><button type="button" className="room-watch-button" onClick={()=>setPreview(previous=>previous.includes(key)?previous:previous.concat(key))}>Ver minha prévia</button></>:watch?<><strong>{publication.isMuted?'A transmissão está pausada':'Conectando à transmissão…'}</strong><p>{name}</p><button type="button" className="room-watch-button" onClick={()=>stop([key])}>Cancelar visualização</button></>:<><Avatar url={props.avatar(participant)} name={name}/><strong>{name} está compartilhando a tela</strong><button type="button" className="room-watch-button" aria-label={'Assista a transmissão de '+name} onClick={()=>start(key)}><Play size={15} fill="currentColor"/>Assista a transmissão</button></>}</div>}
+        return <article ref={element=>{if(element)streamElements.current.set(key,element);else streamElements.current.delete(key);}} key={key} className={'room-stream'+(watch?' is-watching':' is-invitation')} hidden={!shownKeys.has(key)} aria-label={'Transmissão de '+name}>
+          {playing&&publication.track&&publication.track.mediaStreamTrack.readyState==='live'&&!publication.isMuted?<><TrackVideo track={publication.track} screen publication={!own?publication as RemoteTrackPublication:undefined}/><button type="button" className="room-video-toggle" aria-label={mode==='overview'?'Focar transmissão de '+name:'Ver visão global da sala'} onClick={()=>{if(document.fullscreenElement)return;mode==='overview'?spotlight(key):(setLayout('overview'),wake());}}/></>:<div className="room-stream-placeholder"><Monitor size={32}/>{own?<><strong>Sua transmissão está ao vivo</strong><p>A prévia está pausada para economizar recursos.</p><button type="button" className="room-watch-button" onClick={()=>setPreview(previous=>previous.includes(key)?previous:previous.concat(key))}>Ver minha prévia</button></>:watch?<><strong>{pending||props.reconnecting?'Reconectando à transmissão…':publication.isMuted?'A transmissão está pausada':'Conectando à transmissão…'}</strong><p>{name}</p><button type="button" className="room-watch-button" onClick={()=>stop([key])}>Cancelar visualização</button></>:<><Avatar url={props.avatar(participant)} name={name}/><strong>{name} está compartilhando a tela</strong><button type="button" className="room-watch-button" aria-label={'Assista a transmissão de '+name} onClick={()=>start(key)}><Play size={15} fill="currentColor"/>Assista a transmissão</button></>}</div>}
           <span className="room-stream-name room-hover-control"><Monitor size={13}/>{own?'Sua tela':name}</span>
           {watch&&<div className="room-stream-actions room-hover-control">
             <button type="button" className="room-icon-button" aria-label={(focused.includes(key)?'Remover do foco: ':'Adicionar ao foco: ')+name} title={focused.includes(key)?'Remover do foco':'Adicionar ao foco'} aria-pressed={focused.includes(key)} onClick={()=>toggleFocus(key)}>{focused.includes(key)?<PinOff size={17}/>:<Pin size={17}/>}</button>
             {!own&&<><button type="button" className="room-icon-button" aria-label={'Parar de visualizar '+name} title="Parar de visualizar" onClick={()=>stop([key])}><EyeOff size={18}/></button><StreamVolume name={name} volume={volume.screen} muted={!!volume.screenMuted} onVolume={value=>props.onVolume(id,value)} onMute={()=>props.onMute(id)}/></>}
             {playing&&publication.track&&<StreamWindow iconOnly track={publication.track} name={name+' · Tela'} audio={!own?{volume:volume.screen,muted:!!volume.screenMuted,onVolume:value=>props.onVolume(id,value),onMute:()=>props.onMute(id)}:undefined}/>}
-            <button type="button" className="room-icon-button" aria-label={'Tela cheia: '+name} title={fullscreen?'Sair da tela cheia':'Tela cheia'} onClick={()=>void maximize()}>{fullscreen?<Minimize2 size={18}/>:<Maximize2 size={18}/>}</button>
+            <button type="button" className="room-icon-button" aria-label={'Tela cheia: '+name} title={fullscreen?'Sair da tela cheia':'Tela cheia'} onClick={()=>void maximize(key)}>{fullscreen?<Minimize2 size={18}/>:<Maximize2 size={18}/>}</button>
           </div>}
         </article>;
       })}

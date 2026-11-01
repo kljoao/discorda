@@ -61,6 +61,18 @@ test('built desktop loads with a sandboxed preload and functional health action'
     expect(await page.evaluate(()=>window.open('about:blank','discorda-stream')===null)).toBe(true);
     await page.keyboard.press('Escape');
 
+    await page.evaluate(()=>{
+      const surface=document.createElement('article');surface.id='native-fullscreen-probe';surface.className='room-stream';surface.style.cssText='position:fixed;inset:20px;z-index:2000;background:#000';
+      const button=document.createElement('button');button.textContent='Testar tela cheia nativa';button.onclick=()=>void surface.requestFullscreen({navigationUI:'hide'});
+      surface.append(button);document.body.append(surface);
+    });
+    await page.getByRole('button',{name:'Testar tela cheia nativa',exact:true}).click();
+    await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen())).toBe(true);
+    expect(await page.evaluate(()=>document.fullscreenElement?.id)).toBe('native-fullscreen-probe');
+    await page.evaluate(()=>document.exitFullscreen());
+    await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen())).toBe(false);
+    await page.evaluate(()=>document.getElementById('native-fullscreen-probe')?.remove());
+
   } finally { await app.close(); }
 });
 

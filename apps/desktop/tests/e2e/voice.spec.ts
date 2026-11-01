@@ -39,6 +39,7 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await room.getByRole('button',{name:'Focar transmissão de Ana',exact:true}).click();
   await room.getByRole('button',{name:'Assista a transmissão de Bruno',exact:true}).click();
   await expect(room.locator('video')).toHaveCount(2);await expect(page.locator('audio')).toHaveCount(2);
+  await room.locator('.room-video-toggle').first().click();
   await room.getByRole('button',{name:'Mosaico de transmissões',exact:true}).click();
   await expect(room).toHaveAttribute('data-layout','mosaic');
   const ana=room.getByRole('article',{name:'Transmissão de Ana',exact:true});
@@ -53,6 +54,7 @@ test('voice channel opens avatars and screen replacement preserves publication a
   expect(Object.values(JSON.parse(saved!)).some((v:any)=>v.voice===150&&v.screen===15&&v.screenMuted===true)).toBe(true);
   await ana.getByRole('button',{name:'Ouvir transmissão',exact:true}).click();
   await page.keyboard.press('Escape');await expect(ana.locator('.room-volume-panel')).toHaveCount(0);
+  await room.locator('.room-video-toggle').first().click();
   await room.getByRole('button',{name:'Modo cinema',exact:true}).click();
   await expect(room).toHaveClass(/cinema-mode/);
   await page.screenshot({path:'test-results/cinema-multistream.png',fullPage:true});
@@ -74,8 +76,9 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await page.evaluate(()=>(window as any).removeFixtureStream('Ana'));
   await expect(room.locator('video')).toHaveCount(0);await expect(page.locator('audio')).toHaveCount(0);
   await page.evaluate(()=>(window as any).addFixtureStreams());
-  await expect(room.getByRole('button',{name:'Assista a transmissão de Ana',exact:true})).toBeVisible();
-  expect((await reception()).subscriptions.find((p:any)=>p.name==='Ana').tracks.every((t:any)=>!t.desired)).toBe(true);
+  await expect(room.locator('.room-stream video')).toHaveCount(1);
+  expect((await reception()).subscriptions.find((p:any)=>p.name==='Ana').tracks.every((t:any)=>t.desired)).toBe(true);
+  await room.getByRole('button',{name:'Parar de visualizar Ana',exact:true}).click();
 
   await page.getByRole('button',{name:'geral',exact:true}).click();
   await expect(page.getByText('Chat de texto',{exact:true})).toBeVisible();
@@ -109,6 +112,7 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await expect(page.locator('html')).toHaveAttribute('data-stream-privacy','true');
 
   await expect.poll(async()=>(await snapshot()).audio).toBe(1);
+  await expect.poll(async()=>await page.evaluate(()=>(window as any).voiceSnapshot().publishedAudioLevel)).toBeGreaterThan(0.005);
   await page.getByRole('button',{name:'Opções da transmissão',exact:true}).click();
   await page.screenshot({path:'test-results/share-options.png',fullPage:true});
   await page.getByRole('button',{name:'Trocar tela ou janela'}).click();
@@ -139,6 +143,45 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await expect(page.getByRole('button',{name:'Sair da chamada'})).toHaveCount(0);
   expect((await snapshot()).joins).toBe(2);
   expect(await page.evaluate(()=>Object.keys(localStorage).filter(k=>k.includes('last-call:')).length)).toBe(0);
+ }finally{await browser.close();await server.close();}
+});
+
+test('shared audio has a measurable signal and watching survives republish and full call recovery',async()=>{
+ test.setTimeout(45000);
+ const server=await createServer({cacheDir:'node_modules/.vite-e2e-voice',optimizeDeps:{entries:['tests/e2e/voice.fixture.html']},resolve:{alias:[{find:/^livekit-client$/,replacement:path.resolve('tests/e2e/livekit.fixture.ts')}]},server:{port:5187,strictPort:true}});await server.listen();
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:960}});
+  await page.addInitScript(()=>localStorage.setItem('discorda:call-sounds','0'));
+  await page.goto('http://127.0.0.1:5187/tests/e2e/voice.fixture.html?initial');
+  await page.getByRole('button',{name:/Conversa/}).click();
+  const room=page.getByRole('region',{name:'Chamada Conversa'});
+  const snapshot=()=>page.evaluate(()=>(window as any).voiceSnapshot());
+  await room.getByRole('button',{name:'Assista a transmissão de Ana',exact:true}).click();
+  const ana=room.getByRole('article',{name:'Transmissão de Ana',exact:true});
+  await expect.poll(async()=>(await snapshot()).mixedAudioLevel).toBeGreaterThan(.005);
+  await ana.getByRole('button',{name:'Volume da transmissão de Ana',exact:true}).click();
+  await ana.getByRole('button',{name:'Silenciar transmissão',exact:true}).click();
+  await expect.poll(async()=>(await snapshot()).mixedAudioLevel).toBeLessThan(.0001);
+  await ana.getByRole('button',{name:'Ouvir transmissão',exact:true}).click();
+  await expect.poll(async()=>(await snapshot()).mixedAudioLevel).toBeGreaterThan(.005);
+  await page.keyboard.press('Escape');
+  await page.evaluate(()=>(window as any).removeFixtureStream('Ana'));
+  await expect(ana.getByText('Reconectando à transmissão…')).toBeVisible();
+  await page.evaluate(()=>(window as any).addFixtureStreams());
+  await expect(ana.locator('video')).toHaveCount(1);
+  await expect.poll(async()=>(await snapshot()).mixedAudioLevel).toBeGreaterThan(.005);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'suspend'})));
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('fixture-power',{detail:'resume'})));
+  await expect.poll(async()=>(await snapshot()).joins).toBe(2);
+  await expect(ana.locator('video')).toHaveCount(1);
+  await expect.poll(async()=>(await snapshot()).mixedAudioLevel).toBeGreaterThan(.005);
+  await ana.getByRole('button',{name:'Parar de visualizar Ana',exact:true}).click();
+  await expect(page.locator('audio')).toHaveCount(0);
+  await page.evaluate(()=>(window as any).removeFixtureStream('Ana'));
+  await page.evaluate(()=>(window as any).addFixtureStreams());
+  await expect(room.getByRole('button',{name:'Assista a transmissão de Ana',exact:true})).toBeVisible();
+  await expect(room.locator('.room-stream video')).toHaveCount(0);
  }finally{await browser.close();await server.close();}
 });
 
@@ -181,10 +224,13 @@ test('late join waits for consent, supports cameras, multiple focus, hover contr
   await page.screenshot({path:'test-results/voice-focus-controls.png',animations:'disabled'});
   await page.keyboard.press('Escape');
   await ana.getByRole('button',{name:'Tela cheia: Ana',exact:true}).click();
-  await expect.poll(()=>room.evaluate(element=>document.fullscreenElement===element)).toBe(true);
+  await expect.poll(()=>ana.evaluate(element=>document.fullscreenElement===element)).toBe(true);
+  expect(await ana.evaluate(element=>!element.querySelector('.room-person')&&!element.querySelector('.room-filmstrip')&&getComputedStyle(element).height===innerHeight+'px')).toBe(true);
   await ana.getByRole('button',{name:'Tela cheia: Ana',exact:true}).click();
   await expect.poll(()=>page.evaluate(()=>document.fullscreenElement===null)).toBe(true);
-  await room.getByRole('button',{name:'Visão global',exact:true}).click();
+  await expect(room.getByRole('group',{name:'Organizar a sala'})).toHaveCount(0);
+  await room.locator('.room-video-toggle').first().click();
+  await expect(room.getByRole('group',{name:'Organizar a sala'})).toBeVisible();
   await page.screenshot({path:'test-results/voice-overview.png',animations:'disabled'});
   await page.setViewportSize({width:820,height:720});
   expect(await room.evaluate(element=>element.scrollWidth<=element.clientWidth)).toBe(true);

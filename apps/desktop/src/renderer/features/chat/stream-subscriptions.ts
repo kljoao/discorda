@@ -1,9 +1,13 @@
-import {RoomEvent, Track, type Participant, type RemoteParticipant, type Room} from 'livekit-client';
+import {RoomEvent, Track, type Participant, type Room} from 'livekit-client';
 
-// A new publication is a new invitation, even when the same person shares again.
-export function streamKey(participant:Pick<Participant,'identity'>,publication:{trackSid:string}) {
-  return participant.identity+':'+publication.trackSid;
+// Keep the viewer's choice across republishing and server-issued lease changes.
+export function streamKey(participant:Pick<Participant,'identity'>&{metadata?:string},_publication?:{trackSid:string}) {
+  let owner=participant.identity;
+  try {const id=JSON.parse(participant.metadata??'{}').userId;if(typeof id==='string'&&/^[0-9a-f-]{36}$/i.test(id))owner=id;}catch{}
+  return owner+':screen';
 }
+
+export const streamReconnectGrace=120_000;
 
 export function watchingParticipant(participant:Participant,watching:ReadonlySet<string>) {
   return [...participant.videoTrackPublications.values()].some(publication=>
@@ -13,8 +17,11 @@ export function watchingParticipant(participant:Participant,watching:ReadonlySet
 /** Used with connect({autoSubscribe:false}); never briefly downloads a screen on join. */
 export function bindStreamSubscriptions(room:Room,onEnded:(keys:string[])=>void) {
   let watching=new Set<string>();
+  const missing=new Map<string,ReturnType<typeof setTimeout>>();
   function reconcile() {
+    const present=new Set<string>();
     for(const participant of room.remoteParticipants.values()) {
+      for(const publication of participant.videoTrackPublications.values())if(publication.source===Track.Source.ScreenShare)present.add(streamKey(participant));
       const watch=watchingParticipant(participant,watching);
       for(const publication of participant.trackPublications.values()) {
         const desired=publication.source===Track.Source.ScreenShare
@@ -23,17 +30,15 @@ export function bindStreamSubscriptions(room:Room,onEnded:(keys:string[])=>void)
         if(publication.isDesired!==desired)publication.setSubscribed(desired);
       }
     }
+    for(const [key,timer] of missing)if(present.has(key)||!watching.has(key)){clearTimeout(timer);missing.delete(key);}
+    for(const key of watching)if(!present.has(key)&&!missing.has(key))missing.set(key,setTimeout(()=>{
+      missing.delete(key);if(watching.delete(key))onEnded([key]);
+    },streamReconnectGrace));
   }
-  function unpublished(publication:{source:Track.Source;trackSid:string},participant:RemoteParticipant) {
-    if(publication.source===Track.Source.ScreenShare) {
-      const key=streamKey(participant,publication);
-      if(watching.delete(key))onEnded([key]);
-    }
+  function unpublished() {
     reconcile();
   }
-  function disconnected(participant:RemoteParticipant) {
-    const ended=[...watching].filter(key=>key.startsWith(participant.identity+':'));
-    ended.forEach(key=>watching.delete(key));if(ended.length)onEnded(ended);
+  function disconnected() {
     reconcile();
   }
   room.on(RoomEvent.TrackPublished,reconcile).on(RoomEvent.TrackUnpublished,unpublished)
@@ -44,6 +49,7 @@ export function bindStreamSubscriptions(room:Room,onEnded:(keys:string[])=>void)
     update(keys:ReadonlySet<string>){watching=new Set(keys);reconcile();},
     stop(){
       watching.clear();
+      missing.forEach(clearTimeout);missing.clear();
       room.off(RoomEvent.TrackPublished,reconcile).off(RoomEvent.TrackUnpublished,unpublished)
         .off(RoomEvent.ParticipantConnected,reconcile).off(RoomEvent.ParticipantDisconnected,disconnected)
         .off(RoomEvent.Reconnected,reconcile);

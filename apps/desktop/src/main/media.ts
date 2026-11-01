@@ -48,8 +48,10 @@ export class MediaController {
         return { ok: false, message: 'Entrada cancelada.' };
       }
       this.active = { channelId: value.channelId, leaseId: grant.leaseId };
+      // Call/audio heartbeats must keep running while the sender is in a game or another app.
+      this.window()?.webContents.setBackgroundThrottling(false);
     }
-    if (value.kind === 'leave' && this.active?.leaseId === value.leaseId) { this.active = undefined; this.selected = undefined; this.audio.stop(); }
+    if (value.kind === 'leave' && this.active?.leaseId === value.leaseId) { this.active = undefined; this.selected = undefined; this.audio.stop();this.window()?.webContents.setBackgroundThrottling(true); }
     return result;
   }
   async testMicrophone(enabled: boolean) {
@@ -68,6 +70,7 @@ export class MediaController {
   }
   async stop() {
     this.audio.stop();this.deviceGrantUntil=0;
+    this.window()?.webContents.setBackgroundThrottling(true);
     this.testRevision++;
     this.testingUntil = 0;
     this.generation++; const active = this.active; this.active = undefined; this.selected = undefined; this.sources.clear();
