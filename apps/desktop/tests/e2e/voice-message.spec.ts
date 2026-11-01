@@ -8,6 +8,15 @@ test('voice messages record real audio, release capture, retry without duplicati
  try{
   const page=await browser.newPage({viewport:{width:1440,height:960}});page.setDefaultTimeout(12000);await page.addInitScript(installChatFixture);
   await page.addInitScript(()=>{
+   // Render the real audio graph through a native silent sink. CI needs no speakers.
+   // Explicit device IDs still use the browser's actual device validation below.
+   const NativeAudioContext=window.AudioContext;
+   const setSink=(NativeAudioContext.prototype as AudioContext&{setSinkId:(id:string|{type:'none'})=>Promise<void>}).setSinkId;
+   class TestAudioContext extends NativeAudioContext{
+    constructor(options?:AudioContextOptions){super({...options,sinkId:{type:'none'}} as AudioContextOptions);}
+    setSinkId(id:string|{type:'none'}){return setSink.call(this,id===''?{type:'none'}:id);}
+   }
+   window.AudioContext=TestAudioContext;
    const state={denied:false,grants:[] as boolean[],tracks:[] as MediaStreamTrack[],sends:[] as {clientId:string;size:number}[],delay:false,resolve:undefined as (()=>void)|undefined};(window as any).voiceTest=state;
    window.addEventListener('test-voice-send',event=>state.sends.push((event as CustomEvent).detail));
    navigator.mediaDevices.getUserMedia=async()=>{
