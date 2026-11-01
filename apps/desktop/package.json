@@ -28,7 +28,7 @@
     "react": "19.3.0",
     "react-dom": "19.3.0",
     "tailwind-merge": "3.7.0",
-    "undici": "8.11.2",
+    "undici": "8.12.3",
     "ws": "8.22.0"
   },
   "devDependencies": {

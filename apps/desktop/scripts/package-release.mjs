@@ -10,6 +10,7 @@ function run(command,args,shell=false) {
   if(result.status!==0)process.exit(result.status??1);
 }
 const npm=process.platform==='win32'?'npm.cmd':'npm';
+run(npm,['audit','--omit=dev','--audit-level=high'],process.platform==='win32');
 run(npm,['test'],process.platform==='win32');
 run(npm,['run','build:audio'],process.platform==='win32');
 run(npm,['run','build'],process.platform==='win32');

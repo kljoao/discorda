@@ -1,7 +1,7 @@
 Discorda — third-party JavaScript license notices
 
 
-=== apps/desktop/node_modules/undici (8.11.2) — MIT ===
+=== apps/desktop/node_modules/undici (8.12.3) — MIT ===
 
 MIT License
 
