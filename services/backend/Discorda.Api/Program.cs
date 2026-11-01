@@ -38,6 +38,7 @@ builder.Services.AddSerilog(configuration => configuration
     .MinimumLevel.Override("System.Net.Http.HttpClient", LogEventLevel.Warning)
     .Enrich.FromLogContext()
     .WriteTo.Console(new RenderedCompactJsonFormatter()));
+builder.Services.AddScoped<ChannelPermissions>();
 builder.Services.AddSingleton<OperationsCache>();
 builder.Services.AddSingleton<MediaService>();
 builder.Services.AddHostedService(sp => sp.GetRequiredService<MediaService>());
@@ -160,6 +161,7 @@ app.MapAttachments();
 app.MapInbox();
 app.MapTemporaryRooms();
 app.MapManagement();
+app.MapPermissionManagement();
 app.MapMedia();
 app.MapReverseProxy();
 app.MapHub<ChatHub>("/api/v1/live", options => options.CloseOnAuthenticationExpiration = true).RequireAuthorization("Member");

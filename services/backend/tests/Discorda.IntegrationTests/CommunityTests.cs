@@ -242,6 +242,7 @@ public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixt
     public async Task TemporaryRoomsLimitPerCreatorAndExpireWhenEmpty()
     {
         await using var app = fixture.App(); var member = await Member(app); using var client = member.Client;
+        await fixture.GrantChannelCreation(member.Id);
         const string route = "/api/v1/chat/temporary-rooms";
         var first = await client.PostAsJsonAsync(route, new { name = "Test room" }); first.EnsureSuccessStatusCode();
         var id = (await first.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();

@@ -14,5 +14,6 @@ public sealed class WorkspaceMember
     public Guid WorkspaceId { get; init; }
     public Guid UserId { get; init; }
     public MemberRole Role { get; set; } = MemberRole.Member;
+    public long PermissionVersion {get;set;}=1;
     public DateTimeOffset JoinedAt { get; init; } = DateTimeOffset.UtcNow;
 }

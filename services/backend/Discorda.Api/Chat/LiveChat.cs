@@ -1,3 +1,6 @@
+using Discorda.Api.Admin;
+using Discorda.Api.Media;
+using Discorda.Core.Workspaces;
 using System.Collections.Concurrent;
 using Discorda.Api.Auth;
 using Discorda.Infrastructure.Persistence;
@@ -6,7 +9,8 @@ using Microsoft.EntityFrameworkCore;
 
 namespace Discorda.Api.Chat;
 
-public sealed record PresenceMember(Guid Id, string Name, string Status, Guid? TypingChannelId, string? AvatarUrl = null);
+public sealed record MemberRoleView(Guid Id,string Name,string Color,int Position);
+public sealed record PresenceMember(Guid Id, string Name, string Status, Guid? TypingChannelId, string? AvatarUrl = null, string? AccountName = null, MemberRoleView[]? Roles = null);
 public sealed record LivePeer(string ConnectionId, Guid UserId, Guid SessionId, string Name, DateTimeOffset ExpiresAt,
     DateTimeOffset SeenAt, bool Away, Guid? ChannelId, DateTimeOffset TypingUntil, Action Abort, string? AvatarUrl = null);
 
@@ -64,13 +68,27 @@ public sealed class LiveChat(IHubContext<ChatHub> hub, IServiceScopeFactory scop
     {
         try {
             var targets = await Authorized(ct);
-            if (targets.Length > 0) await hub.Clients.Clients(targets.Select(x => x.ConnectionId).ToArray()).SendAsync("ChatEvent", new { kind, data }, ct);
+            if(targets.Length==0)return;
+            using var scope=scopes.CreateScope();var policy=await scope.ServiceProvider.GetRequiredService<ChannelPermissions>().Load(ct);
+            if(kind=="channels")data=new{id=ChatEndpoints.GroupId};
+            var property=data.GetType().GetProperty("ChannelId")??data.GetType().GetProperty("channelId");
+            var channel=property?.GetValue(data) as Guid?;
+            if(channel.HasValue)targets=targets.Where(t=>policy.Has(t.UserId,Permission.ViewChannel,channel)).ToArray();
+            if(kind=="moderation") {var target=(Guid?)data.GetType().GetProperty("userId")?.GetValue(data);targets=targets.Where(t=>t.UserId==target).ToArray();}
+            if(kind=="voiceRoster"&&data is VoiceMember[] roster){
+                foreach(var group in targets.GroupBy(t=>t.UserId))await hub.Clients.Clients(group.Select(t=>t.ConnectionId).ToArray()).SendAsync("ChatEvent",new{kind,data=roster.Where(m=>policy.Has(group.Key,Permission.ViewChannel,m.ChannelId)).ToArray()},ct);
+            }else if(targets.Length>0)await hub.Clients.Clients(targets.Select(t=>t.ConnectionId).ToArray()).SendAsync("ChatEvent",new{kind,data},ct);
         } catch (Exception error) when (!ct.IsCancellationRequested) {
             // REST has already committed. Clients resynchronize after reconnect and periodically.
             logger.LogWarning("Live chat delivery unavailable ({ErrorType})", error.GetType().Name);
         }
     }
-    public async Task<PresenceMember[]> GetMembers(CancellationToken ct) => await Members(await Authorized(ct), ct);
+    public async Task<PresenceMember[]> GetMembers(CancellationToken ct,Guid? channelId=null) {
+        var members=await Members(await Authorized(ct),ct);
+        if(!channelId.HasValue)return members.Select(m=>m with{TypingChannelId=null}).ToArray();
+        using var scope=scopes.CreateScope();var policy=await scope.ServiceProvider.GetRequiredService<ChannelPermissions>().Load(ct);
+        return members.Where(m=>policy.Has(m.Id,Permission.ViewChannel,channelId)).Select(m=>m with{TypingChannelId=m.TypingChannelId==channelId?channelId:null}).ToArray();
+    }
     private async Task<PresenceMember[]> Members(LivePeer[] targets, CancellationToken ct)
     {
             using var scope = scopes.CreateScope();
@@ -79,10 +97,16 @@ public sealed class LiveChat(IHubContext<ChatHub> hub, IServiceScopeFactory scop
                 join user in db.Users on member.UserId equals user.Id
                 where member.WorkspaceId == ChatEndpoints.GroupId && user.LastSeenAt != null
                     && db.AllowedUsers.Any(allowed => allowed.BoundUserId == user.Id && allowed.Enabled)
-                select new PresenceMember(user.Id, user.DisplayName, "offline", null, user.AvatarUrl))
+                select new PresenceMember(user.Id, user.DisplayName, "offline", null, user.AvatarUrl, user.AccountDisplayName, null))
                 .AsNoTracking().ToArrayAsync(ct);
             var online = Snapshot(targets, clock.GetUtcNow()).ToDictionary(x => x.Id);
-            return members.Select(member => online.GetValueOrDefault(member.Id) ?? member)
+            var policy=await scope.ServiceProvider.GetRequiredService<ChannelPermissions>().Load(ct);
+            return members.Select(member => {
+                var current=online.GetValueOrDefault(member.Id);
+                return member with {Status=current?.Status??"offline",TypingChannelId=current?.TypingChannelId,
+                    Roles=policy.Roles.Where(r=>!r.IsEveryone&&policy.RoleIds(member.Id).Contains(r.Id)).OrderByDescending(r=>r.Position).ThenBy(r=>r.Name).ThenBy(r=>r.Id)
+                        .Select(r=>new MemberRoleView(r.Id,r.Name,r.Color,r.Position)).ToArray()};
+            })
                 .OrderBy(x => x.Name).ThenBy(x => x.Id).ToArray();
     }
     public async Task SendPresence(CancellationToken ct = default)
@@ -91,8 +115,20 @@ public sealed class LiveChat(IHubContext<ChatHub> hub, IServiceScopeFactory scop
             var targets = await Authorized(ct);
             if (targets.Length == 0) return;
             var roster = await Members(targets, ct);
-            await hub.Clients.Clients(targets.Select(x => x.ConnectionId).ToArray())
-                .SendAsync("ChatEvent", new { kind = "presence", data = roster }, ct);
+            using var scope=scopes.CreateScope();var policy=await scope.ServiceProvider.GetRequiredService<ChannelPermissions>().Load(ct);
+            foreach(var group in targets.GroupBy(t=>t.ChannelId)){
+                if(!group.Key.HasValue){
+                    foreach(var person in group.GroupBy(t=>t.UserId)){
+                        var visible=roster.Select(m=>m with{TypingChannelId=m.TypingChannelId.HasValue&&policy.Has(person.Key,Permission.ViewChannel,m.TypingChannelId)?m.TypingChannelId:null}).ToArray();
+                        await hub.Clients.Clients(person.Select(t=>t.ConnectionId).ToArray()).SendAsync("ChatEvent",new{kind="presence",channelId=(Guid?)null,data=visible},ct);
+                    }
+                    continue;
+                }
+                var recipients=group.Where(t=>!group.Key.HasValue||policy.Has(t.UserId,Permission.ViewChannel,group.Key)).ToArray();
+                var filtered=roster.Where(m=>!group.Key.HasValue||policy.Has(m.Id,Permission.ViewChannel,group.Key)).Select(m=>m with{TypingChannelId=group.Key.HasValue&&m.TypingChannelId==group.Key?group.Key:null}).ToArray();
+                if(recipients.Length>0)await hub.Clients.Clients(recipients.Select(t=>t.ConnectionId).ToArray()).SendAsync("ChatEvent",new{kind="presence",channelId=group.Key,data=filtered},ct);
+                var denied=group.Except(recipients).ToArray();if(denied.Length>0)await hub.Clients.Clients(denied.Select(t=>t.ConnectionId).ToArray()).SendAsync("ChatEvent",new{kind="presence",channelId=group.Key,data=Array.Empty<PresenceMember>()},ct);
+            }
         } catch (Exception) when (!ct.IsCancellationRequested) {
             // Fail closed if authorization storage becomes unavailable.
             foreach (var peer in peers.Values) if (peers.TryRemove(peer.ConnectionId, out var removed)) removed.Abort();
@@ -123,7 +159,9 @@ public sealed class ChatHub(LiveChat live, DiscordaDbContext db, TimeProvider cl
         if (Context.Items.TryGetValue("lastPulse", out var last) && last is DateTimeOffset previous && now - previous < TimeSpan.FromSeconds(1)) return;
         Context.Items["lastPulse"] = now;
         if (!await live.Validate(Context.ConnectionId, Context.ConnectionAborted)) { Context.Abort(); throw new HubException("Access denied"); }
-        if (channelId is Guid id && !await db.Channels.AnyAsync(x => x.Id == id && x.WorkspaceId == ChatEndpoints.GroupId && x.Type == Discorda.Core.Channels.ChannelType.Text && x.ArchivedAt == null, Context.ConnectionAborted))
+        var profile=(MemberProfile)Context.GetHttpContext()!.Items[typeof(MemberProfile)]!;
+        var policy=await ChannelPermissions.Read(db,Context.GetHttpContext()!.RequestServices.GetRequiredService<IConfiguration>(),Context.ConnectionAborted);
+        if (channelId is Guid id && !policy.Has(profile.Id,Permission.ViewChannel,id))
             throw new HubException("Unknown channel");
         live.Pulse(Context.ConnectionId, channelId, typing, away);
         await live.SendPresence();

@@ -1,0 +1,51 @@
+import {chromium,expect,test} from '@playwright/test';
+import {createServer} from 'vite';
+import {mkdir} from 'node:fs/promises';
+import {installChatFixture} from './chat-fixture';
+import {installPermissionFixture} from './permissions.fixture';
+
+test('roles, assignments, per-person channel rules and channel-scoped people are usable',async()=>{
+ test.setTimeout(60000);
+ const server=await createServer({cacheDir:'node_modules/.vite-e2e-permissions',optimizeDeps:{entries:['index.html']},server:{port:5191,strictPort:true}});await server.listen();
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ const output=process.env.DISCORDA_UI_OUTPUT??'test-results/permissions/';await mkdir(output,{recursive:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1440,height:960}});const errors:string[]=[];page.on('pageerror',e=>errors.push(e.message));
+  await page.addInitScript({content:`(${installChatFixture.toString()})();(${installPermissionFixture.toString()})();`});await page.goto('http://127.0.0.1:5191');
+  const people=page.getByRole('complementary',{name:'Membros disponíveis'});
+  await expect(people.getByText('Bruno Costa',{exact:true})).toBeVisible();
+  await page.getByRole('navigation',{name:'Canais',exact:true}).getByRole('button',{name:'equipe',exact:true}).click();
+  await expect(people.getByText('Ana Silva',{exact:true})).toBeVisible();await expect(people.getByText('Bruno Costa',{exact:true})).toHaveCount(0);
+  await page.evaluate(()=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'presence',channelId:'225a47d7-779e-4992-89d2-03b1517f9112',data:[{id:'bad',name:'Evento de outro canal',status:'online',typingChannelId:null}]}})));
+  await expect(people.getByText('Evento de outro canal')).toHaveCount(0);
+  await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();await page.getByRole('button',{name:'Cargos e permissões',exact:true}).click();
+  const roles=page.getByRole('dialog',{name:'Cargos e permissões',exact:true});await expect(roles).toBeVisible();
+  await roles.getByRole('button',{name:'Criar cargo',exact:true}).click();await roles.getByLabel('Nome do cargo',{exact:true}).fill('Operação');
+  await roles.getByRole('switch',{name:'Ver canal',exact:true}).check();await roles.getByRole('switch',{name:'Enviar mensagens',exact:true}).check();await roles.getByRole('switch',{name:'Compartilhar tela',exact:true}).check();
+  await roles.locator('.permission-editor').evaluate(node=>node.scrollTop=0);await page.screenshot({path:output+'cargos-permissoes.png',animations:'disabled'});
+  await roles.getByRole('button',{name:'Salvar alterações',exact:true}).click();await expect(roles.getByText('Alterações salvas. Os acessos já foram atualizados.')).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).permissionFixture().roles[0].permissions)).toBe(2051);
+  await roles.getByRole('tab',{name:'Pessoas',exact:true}).click();await roles.getByRole('button',{name:/Ana Silva/}).click();
+  await roles.getByRole('checkbox',{name:'Atribuir Operação',exact:true}).check();await roles.getByRole('button',{name:'Salvar alterações',exact:true}).click();
+  await expect(roles.getByText('Alterações salvas. Os acessos já foram atualizados.')).toBeVisible();
+  await page.screenshot({path:output+'pessoas-cargos.png',animations:'disabled'});
+  await roles.getByRole('button',{name:'Fechar',exact:true}).click();await expect(roles).toHaveCount(0);await expect(page.locator('.is-closing')).toHaveCount(0);
+  await page.getByRole('button',{name:'Configurar canal equipe',exact:true}).click();const policy=page.getByRole('dialog',{name:'Configurar canal equipe',exact:true});await expect(policy).toBeVisible();
+  await expect(policy.getByRole('button',{name:'Negar Ver canal',exact:true})).toHaveAttribute('aria-pressed','true');
+  await policy.getByRole('tab',{name:'Pessoas',exact:true}).click();await policy.getByRole('combobox',{name:'Permissões de',exact:true}).click();await policy.getByRole('option',{name:/Ana Silva/}).click();
+  await policy.getByRole('button',{name:'Negar Enviar mensagens',exact:true}).click();await policy.getByRole('button',{name:'Permitir Ver canal',exact:true}).click();
+  await policy.locator('.channel-permission-body').evaluate(node=>node.scrollTop=0);
+  await page.screenshot({path:output+'canal-regras-pessoa.png',animations:'disabled'});
+  await policy.getByRole('button',{name:'Salvar permissões',exact:true}).click();await expect(policy.getByText('Acesso atualizado para todas as pessoas do canal.')).toBeVisible();
+  const rule=await page.evaluate(()=>(window as any).permissionFixture().overwrites.find((r:any)=>r.userId===(window as any).permissionFixture().anna));expect(rule.allow).toBe(1);expect(rule.deny).toBe(2);
+  await policy.getByRole('button',{name:'Fechar configurações do canal',exact:true}).click();await expect(policy).toHaveCount(0);await expect(page.locator('.is-closing')).toHaveCount(0);
+  await page.screenshot({path:output+'canal-pessoas-autorizadas.png',animations:'disabled'});
+  await page.evaluate(()=>window.dispatchEvent(new Event('test-permission-reader')));
+  await expect(page.getByRole('navigation',{name:'Canais',exact:true}).getByRole('button',{name:'equipe',exact:true})).toHaveCount(0);
+  await expect(page.getByText('Você pode ler este canal. Seu cargo não permite enviar mensagens aqui.',{exact:true})).toBeVisible();
+  await expect(page.getByRole('button',{name:/Sala da equipe/})).toBeDisabled();
+  await page.screenshot({path:output+'canal-somente-leitura.png',animations:'disabled'});
+  await page.setViewportSize({width:900,height:650});expect(await page.evaluate(()=>document.documentElement.scrollWidth<=innerWidth)).toBe(true);
+  expect(errors).toEqual([]);
+ }finally{await browser.close();await server.close();}
+});

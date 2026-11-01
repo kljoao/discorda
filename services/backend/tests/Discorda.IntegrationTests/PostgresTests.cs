@@ -11,7 +11,7 @@ namespace Discorda.IntegrationTests;
 
 public sealed class PostgresTests : IAsyncLifetime
 {
-    private readonly PostgreSqlContainer _postgres = new PostgreSqlBuilder("postgres:17.11-alpine3.23").Build();
+    private readonly TestDatabase _postgres = new();
     private DbContextOptions<DiscordaDbContext> Options => new DbContextOptionsBuilder<DiscordaDbContext>()
         .UseNpgsql(_postgres.GetConnectionString(), postgres => postgres.MigrationsHistoryTable("__EFMigrationsHistory", "discorda"))
         .Options;

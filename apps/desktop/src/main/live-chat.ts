@@ -20,6 +20,7 @@ export class LiveChatClient {
   private typingAt = 0;
   private lastPulse = 0;
   private pulsing = false;
+  private activityTimer?:ReturnType<typeof setTimeout>;
   constructor(private readonly origin: string | undefined, private readonly token: () => Promise<string>, private readonly emit: (event: LiveEvent) => void, private readonly away: () => boolean, private readonly serverConfig?:ServerConfig) {}
   start() {
     this.wanted = true;
@@ -63,7 +64,9 @@ export class LiveChatClient {
   }
   activity(channel: unknown, typing: unknown) {
     if (typeof channel !== 'string' || !/^[0-9a-f]{8}(-[0-9a-f]{4}){3}-[0-9a-f]{12}$/i.test(channel) || typeof typing !== 'boolean') throw new Error('Invalid activity');
+    const changed=this.channel!==channel;
     this.channel = channel; this.typingAt = typing ? Date.now() : 0;
+    if(changed){clearTimeout(this.activityTimer);this.activityTimer=setTimeout(()=>void this.pulse(),Math.max(0,1100-(Date.now()-this.lastPulse)));return;}
     if (Date.now() - this.lastPulse > 1500) void this.pulse();
   }
   private async pulse() {
@@ -74,7 +77,7 @@ export class LiveChatClient {
     finally { this.pulsing = false; }
   }
   async stop() {
-    this.wanted = false; if (this.timer) clearInterval(this.timer); this.timer = undefined;
+    this.wanted = false;clearTimeout(this.activityTimer); if (this.timer) clearInterval(this.timer); this.timer = undefined;
     const connection = this.connection; this.connection = undefined; this.channel = undefined; this.typingAt = 0;
     await connection?.stop().catch(() => undefined);
     this.emit({kind: 'presence', data: []}); this.status('offline');

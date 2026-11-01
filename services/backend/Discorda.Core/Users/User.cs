@@ -7,6 +7,7 @@ public sealed class User
     public required string AuthSubject { get; init; }
     public required string Email { get; set; }
     public required string DisplayName { get; set; }
+    public string? AccountDisplayName { get; set; }
     public string? CustomDisplayName { get; set; }
     public string? AvatarUrl { get; set; }
     public DateTimeOffset CreatedAt { get; init; } = DateTimeOffset.UtcNow;

@@ -7,6 +7,9 @@ namespace Discorda.Infrastructure.Persistence;
 
 public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> options) : DbContext(options)
 {
+    public DbSet<PermissionRole> PermissionRoles => Set<PermissionRole>();
+    public DbSet<MemberPermissionRole> MemberPermissionRoles => Set<MemberPermissionRole>();
+    public DbSet<ChannelPermissionOverwrite> ChannelPermissionOverwrites => Set<ChannelPermissionOverwrite>();
     public DbSet<ServerInvite> ServerInvites => Set<ServerInvite>();
     public DbSet<JoinRequest> JoinRequests => Set<JoinRequest>();
     public DbSet<StoragePolicy> StoragePolicies => Set<StoragePolicy>();
@@ -29,6 +32,25 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
 
     protected override void OnModelCreating(ModelBuilder model)
     {
+        model.Entity<PermissionRole>(e=>{
+            e.ToTable("permission_roles","discorda",t=>{t.HasCheckConstraint("ck_permission_role","\"Permissions\" BETWEEN 0 AND 262143 AND \"Position\" BETWEEN 0 AND 99 AND \"Version\" > 0");});
+            e.HasKey(x=>x.Id);e.Property(x=>x.Name).HasMaxLength(40);e.Property(x=>x.Color).HasMaxLength(7);e.Property(x=>x.Permissions).HasConversion<long>();e.Property(x=>x.Version).IsConcurrencyToken();
+            e.HasIndex(x=>new{x.WorkspaceId,x.IsEveryone}).IsUnique().HasFilter("\"IsEveryone\" = true");
+            e.HasOne<Workspace>().WithMany().HasForeignKey(x=>x.WorkspaceId).OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<MemberPermissionRole>(e=>{
+            e.ToTable("member_permission_roles","discorda");e.HasKey(x=>new{x.RoleId,x.UserId});e.HasIndex(x=>x.UserId);
+            e.HasOne<PermissionRole>().WithMany().HasForeignKey(x=>x.RoleId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany().HasForeignKey(x=>x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
+        model.Entity<ChannelPermissionOverwrite>(e=>{
+            e.ToTable("channel_permission_overwrites","discorda",t=>{t.HasCheckConstraint("ck_channel_overwrite","(\"RoleId\" IS NULL) <> (\"UserId\" IS NULL) AND \"Allow\" BETWEEN 0 AND 36863 AND \"Deny\" BETWEEN 0 AND 36863 AND ((\"Allow\" | \"Deny\") & 225280) = 0 AND (\"Allow\" & \"Deny\") = 0 AND \"Version\" > 0");});
+            e.HasKey(x=>x.Id);e.Property(x=>x.Allow).HasConversion<long>();e.Property(x=>x.Deny).HasConversion<long>();e.Property(x=>x.Version).IsConcurrencyToken();
+            e.HasIndex(x=>new{x.ChannelId,x.RoleId}).IsUnique().HasFilter("\"RoleId\" IS NOT NULL");e.HasIndex(x=>new{x.ChannelId,x.UserId}).IsUnique().HasFilter("\"UserId\" IS NOT NULL");
+            e.HasOne<Channel>().WithMany().HasForeignKey(x=>x.ChannelId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<PermissionRole>().WithMany().HasForeignKey(x=>x.RoleId).OnDelete(DeleteBehavior.Cascade);
+            e.HasOne<User>().WithMany().HasForeignKey(x=>x.UserId).OnDelete(DeleteBehavior.Cascade);
+        });
         model.Entity<StoragePolicy>(e => { e.ToTable("storage_policy", "discorda"); e.HasKey(x => x.Id); });
         model.Entity<ServerInvite>(e => {
             e.ToTable("server_invites", "discorda"); e.HasKey(x => x.Id); e.Property(x => x.TokenHash).HasMaxLength(64); e.HasIndex(x => x.TokenHash).IsUnique();
@@ -103,6 +125,7 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
             entity.Property(x => x.AuthSubject).HasMaxLength(255);
             entity.Property(x => x.Email).HasMaxLength(320);
             entity.Property(x => x.DisplayName).HasMaxLength(100);
+            entity.Property(x => x.AccountDisplayName).HasMaxLength(100);
             entity.Property(x => x.CustomDisplayName).HasMaxLength(32);
             entity.Property(x => x.AvatarUrl).HasMaxLength(2048);
             entity.HasIndex(x => new { x.AuthIssuer, x.AuthSubject }).IsUnique();
@@ -139,6 +162,7 @@ public sealed class DiscordaDbContext(DbContextOptions<DiscordaDbContext> option
             entity.ToTable("workspace_members", table => table.HasCheckConstraint("ck_member_role", "\"Role\" IN ('Owner', 'Member', 'Admin', 'Moderator')"));
             entity.HasKey(x => new { x.WorkspaceId, x.UserId });
             entity.Property(x => x.Role).HasConversion<string>().HasMaxLength(16);
+            entity.Property(x=>x.PermissionVersion).HasDefaultValue(1L).IsConcurrencyToken();
             entity.HasOne<Workspace>().WithMany().HasForeignKey(x => x.WorkspaceId).OnDelete(DeleteBehavior.Restrict);
             entity.HasOne<User>().WithMany().HasForeignKey(x => x.UserId).OnDelete(DeleteBehavior.Restrict);
         });

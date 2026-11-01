@@ -1,3 +1,5 @@
+using Discorda.Api.Admin;
+using Discorda.Core.Workspaces;
 using System.Collections.Concurrent;
 using System.IdentityModel.Tokens.Jwt;
 using System.Text;
@@ -20,6 +22,8 @@ public sealed class MediaAdmissionDeniedException : Exception;
 public sealed class MediaService(IConfiguration config, IServiceScopeFactory scopes, IHttpClientFactory clients, ILogger<MediaService> logger) : BackgroundService
 {
     private readonly ConcurrentDictionary<Guid, MediaLease> leases = new();
+    private readonly ConcurrentDictionary<Guid,Permission> grants = new();
+    public Guid? ChannelOf(Guid user)=>leases.TryGetValue(user,out var lease)?lease.ChannelId:null;
     private readonly ConcurrentDictionary<Guid, (DateTimeOffset Until, Guid? Channel)> moderation = new();
     private readonly object admission = new();
     public bool AdmissionAllowed(Guid user, Guid channel) => !moderation.TryGetValue(user, out var entry) || entry.Until <= DateTimeOffset.UtcNow || entry.Channel == channel;
@@ -62,7 +66,7 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
         try {await Rpc("ListRooms", new {}, new {roomList=true}, ct);return true;}
         catch(Exception e) when(e is HttpRequestException or TaskCanceledException or JsonException) {return false;}
     }
-    public async Task<object> Join(MemberProfile profile, Guid session, Guid channel, CancellationToken ct)
+    public async Task<object> Join(MemberProfile profile, Guid session, Guid channel, CancellationToken ct,Permission permission=Permission.Default)
     {
         var room = RoomName(channel);
         await Rpc("CreateRoom", new { name = room, max_participants = 15, empty_timeout = 60 }, new { roomCreate = true }, ct);
@@ -71,11 +75,11 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
         {
             // A moderator may have removed the member while CreateRoom was in flight.
             if (!AdmissionAllowed(profile.Id, channel)) throw new MediaAdmissionDeniedException();
-            leases[profile.Id] = lease;
+            leases[profile.Id] = lease;grants[lease.Id]=permission&Permission.Media;
         }
         return new { leaseId = lease.Id, url = config["LiveKit:PublicUrl"], token = Token(lease.Id.ToString(), profile.DisplayName,
-            new { room, roomJoin = true, canPublish = true, canSubscribe = true, canPublishData = false,
-                canUpdateOwnMetadata = false, canPublishSources = new[] { "microphone", "camera", "screen_share", "screen_share_audio" } }, profile.Id) };
+            new { room, roomJoin = true, canPublish = (permission&(Permission.Speak|Permission.Camera|Permission.ShareScreen))!=0, canSubscribe = true, canPublishData = false,
+                canUpdateOwnMetadata = false, canPublishSources = new[]{(Permission.Speak,"microphone"),(Permission.Camera,"camera"),(Permission.ShareScreen,"screen_share"),(Permission.ShareScreen,"screen_share_audio")}.Where(x=>(permission&x.Item1)!=0).Select(x=>x.Item2).ToArray() }, profile.Id) };
     }
     public async Task<bool> Confirm(MemberProfile profile, Guid session, MediaCommand command, CancellationToken ct)
     {
@@ -116,6 +120,8 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
                 join m in db.WorkspaceMembers on s.UserId equals m.UserId
                 where sessions.Contains(s.Id) && s.RevokedAt == null && a.Enabled && m.WorkspaceId == ChatEndpoints.GroupId
                 select s.Id).ToArrayAsync(ct)).ToHashSet();
+            var policy=await ChannelPermissions.Read(db,config,ct);
+            foreach(var entry in snapshot)if(!policy.Has(entry.Key,Permission.ViewChannel|Permission.ConnectVoice,entry.Value.ChannelId)||grants.GetValueOrDefault(entry.Value.Id)!=(policy.In(entry.Key,entry.Value.ChannelId)&Permission.Media))valid.Remove(entry.Value.SessionId);
             var users = snapshot.Select(x => x.Key).ToArray();
             names = await db.Users.Where(x => users.Contains(x.Id)).ToDictionaryAsync(x => x.Id, x => x.DisplayName, ct);
         }
@@ -124,6 +130,7 @@ public sealed class MediaService(IConfiguration config, IServiceScopeFactory sco
             ((ICollection<KeyValuePair<Guid, MediaLease>>)leases).Remove(entry);
         foreach (var entry in moderation.Where(x => x.Value.Until <= DateTimeOffset.UtcNow)) ((ICollection<KeyValuePair<Guid, (DateTimeOffset Until, Guid? Channel)>>)moderation).Remove(entry);
         var byLease = leases.Values.ToDictionary(x => x.Id);
+        foreach(var id in grants.Keys)if(!byLease.ContainsKey(id))grants.TryRemove(id,out _);
         var rooms = await Rpc("ListRooms", new { }, new { roomList = true }, ct);
         var connected = new List<VoiceMember>();
         if (!rooms.TryGetProperty("rooms", out var items)) { Volatile.Write(ref roster, []); return; }
@@ -184,24 +191,26 @@ public static class MediaEndpoints
         app.MapGet("/api/v1/chat/media/roster", async (HttpContext ctx, DiscordaDbContext db, MediaService media, CancellationToken ct) =>
         {
             var user = (MemberProfile)ctx.Items[typeof(MemberProfile)]!;
-            return await db.WorkspaceMembers.AnyAsync(m => m.UserId == user.Id && m.WorkspaceId == ChatEndpoints.GroupId, ct)
-                ? Results.Ok(media.Roster) : Results.Forbid();
+            var policy=await ChannelPermissions.From(ctx).Load(ct);
+            return policy.Members.ContainsKey(user.Id)?Results.Ok(media.Roster.Where(m=>policy.Has(user.Id,Permission.ViewChannel,m.ChannelId)).ToArray()):Results.Forbid();
         }).RequireAuthorization("Member");
         app.MapPost("/api/v1/chat/media/{action}", async (string action, MediaCommand command, HttpContext ctx, DiscordaDbContext db, MediaService media, LiveChat live, CancellationToken ct) =>
         {
             var user = (MemberProfile)ctx.Items[typeof(MemberProfile)]!;
             var session = Guid.Parse(ctx.User.FindFirst("session_id")!.Value);
             if (action == "leave") { media.Leave(user.Id, session, command); await live.Publish("voiceRoster", media.Roster); return Results.Ok(new { }); }
-            await using var admissionTx = action == "join" ? await db.Database.BeginTransactionAsync(ct) : null;
+            await using var admissionTx = action == "join" ? await Permissions.BeginChange(db,ct) : null;
             if (admissionTx is not null) await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891321)", ct);
             if (!await db.Channels.AnyAsync(c => c.Id == command.ChannelId && c.Type == ChannelType.Voice && c.WorkspaceId == ChatEndpoints.GroupId && c.ArchivedAt == null
                 && db.WorkspaceMembers.Any(m => m.WorkspaceId == c.WorkspaceId && m.UserId == user.Id), ct)) return Results.NotFound();
+            var policy=await ChannelPermissions.From(ctx).Load(ct);
+            if(!policy.Has(user.Id,Permission.ViewChannel|Permission.ConnectVoice,command.ChannelId))return Results.NotFound();
             if (!media.Enabled) return Results.Problem(statusCode: 503, title: "Media server unavailable");
             if (!media.AdmissionAllowed(user.Id, command.ChannelId)) return Results.Forbid();
             if (action == "ready") { try { if (!await media.Confirm(user, session, command, ct)) return Results.Conflict(); await live.Publish("voiceRoster", media.Roster); return Results.Ok(new { }); } catch (HttpRequestException) { return Results.StatusCode(503); } }
             if (action == "pulse") return media.Pulse(user.Id, session, command) ? Results.Ok(new { }) : Results.Conflict();
             if (action != "join") return Results.BadRequest();
-            try { return Results.Ok(await media.Join(user, session, command.ChannelId, ct)); }
+            try { return Results.Ok(await media.Join(user, session, command.ChannelId, ct,policy.In(user.Id,command.ChannelId))); }
             catch (MediaAdmissionDeniedException) { return Results.Forbid(); }
             catch (HttpRequestException) { return Results.Problem(statusCode: 503, title: "Media server unavailable"); }
         }).RequireAuthorization("Member");

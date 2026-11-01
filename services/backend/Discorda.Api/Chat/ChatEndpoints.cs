@@ -1,3 +1,4 @@
+using Discorda.Core.Workspaces;
 using Discorda.Api.Admin;
 using Discorda.Api.Auth;
 using Discorda.Core.Channels;
@@ -19,9 +20,10 @@ public static class ChatEndpoints
     public static readonly Guid GroupId = Guid.Parse("786f3c3b-14ca-4c93-b0a1-9f782ef8c044");
     private static Guid UserId(HttpContext context) => ((MemberProfile)context.Items[typeof(MemberProfile)]!).Id;
     private static bool ValidBody(string? body) => !string.IsNullOrWhiteSpace(body) && body.Length <= 4000 && !body.Contains('\0');
-    internal static Task<bool> Access(DiscordaDbContext db, Guid channelId, Guid user, CancellationToken ct) =>
-        db.Channels.AnyAsync(c => c.Id == channelId && c.WorkspaceId == GroupId && c.Type == ChannelType.Text && c.ArchivedAt == null
-            && db.WorkspaceMembers.Any(m => m.WorkspaceId == c.WorkspaceId && m.UserId == user), ct);
+    internal static async Task<bool> Access(HttpContext ctx,DiscordaDbContext db, Guid channelId, Guid user, CancellationToken ct) {
+        var policy=await ChannelPermissions.From(ctx).Load(ct);
+        return policy.Channels.TryGetValue(channelId,out var channel)&&channel.Type==ChannelType.Text&&policy.Has(user,Discorda.Core.Workspaces.Permission.ViewChannel,channelId);
+    }
     internal static IQueryable<MessageView> Views(DiscordaDbContext db, System.Linq.Expressions.Expression<Func<Message, bool>> filter) => from message in db.Messages.AsNoTracking().Where(filter)
         join author in db.Users on message.AuthorId equals author.Id
         select new MessageView(message.Id.ToString(), message.ChannelId, message.AuthorId, author.DisplayName, message.ClientId,
@@ -32,9 +34,10 @@ public static class ChatEndpoints
     public static void MapChat(this WebApplication app)
     {
         var api = app.MapGroup("/api/v1/chat").RequireAuthorization("Member");
-        api.MapGet("/members", async (HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
+        api.AddEndpointFilter(ChannelPermissions.Guard);
+        api.MapGet("/members", async (Guid? channelId,HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
             !await db.WorkspaceMembers.AnyAsync(m => m.WorkspaceId == GroupId && m.UserId == UserId(ctx), ct)
-                ? Results.Forbid() : Results.Ok(await live.GetMembers(ct)));
+                ? Results.Forbid() : !(!channelId.HasValue||await ChannelPermissions.From(ctx).Has(ctx,Permission.ViewChannel,channelId))?Results.NotFound():Results.Ok(await live.GetMembers(ct,channelId)));
         api.MapPut("/profile", async (EditProfile input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             var name = input.DisplayName?.Trim().Normalize();
@@ -61,20 +64,21 @@ public static class ChatEndpoints
                 await db.WorkspaceMembers.Where(x => x.WorkspaceId == GroupId && x.UserId == user && x.Role == Discorda.Core.Workspaces.MemberRole.Owner)
                     .ExecuteUpdateAsync(set => set.SetProperty(x => x.Role, Discorda.Core.Workspaces.MemberRole.Member), ct);
             var membership = await db.WorkspaceMembers.SingleAsync(x => x.WorkspaceId == GroupId && x.UserId == user, ct);
-            var channels = await db.Channels.Where(x => x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Text)
+            var policy=await ChannelPermissions.From(ctx).Load(ct);var visible=policy.Visible(user);
+            var channels = await db.Channels.Where(x => visible.Contains(x.Id) && x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Text)
                 .OrderBy(x => x.SortOrder).ThenBy(x => x.Name).Select(x => new { x.Id, x.Name }).ToListAsync(ct);
-            var voiceChannels = await db.Channels.Where(x => x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Voice).OrderBy(x => x.SortOrder).ThenBy(x => x.Name).Select(x => new { x.Id, x.Name, Temporary = x.TemporaryOwnerId != null }).ToListAsync(ct);
+            var voiceChannels = await db.Channels.Where(x => visible.Contains(x.Id) && x.WorkspaceId == GroupId && x.ArchivedAt == null && x.Type == ChannelType.Voice).OrderBy(x => x.SortOrder).ThenBy(x => x.Name).Select(x => new { x.Id, x.Name, Temporary = x.TemporaryOwnerId != null }).ToListAsync(ct);
             // One bounded index seek per channel, rather than scanning the complete message history.
-            var heads = await db.Channels.Where(c => c.WorkspaceId == GroupId && c.ArchivedAt == null && c.Type == ChannelType.Text)
+            var heads = await db.Channels.Where(c => visible.Contains(c.Id) && c.WorkspaceId == GroupId && c.ArchivedAt == null && c.Type == ChannelType.Text)
                 .Select(c => new { c.Id, LastId = db.Messages.Where(m => m.ChannelId == c.Id && m.ThreadRootId == null).OrderByDescending(m => m.Id).Select(m => (long?)m.Id).FirstOrDefault() })
                 .ToDictionaryAsync(c => c.Id, c => c.LastId == null ? null : c.LastId.ToString(), ct);
             var effectiveRole = await Permissions.Role(ctx, app.Configuration, db, ct);
-            return Results.Ok(new { workspace.Id, workspace.Name, isAdmin = Permissions.Rank(effectiveRole) >= 2, role = effectiveRole.ToString(), userId = user, channels = channels.Select(c => new {c.Id,c.Name,lastMessageId=heads.GetValueOrDefault(c.Id)}), voiceChannels });
+            return Results.Ok(new { workspace.Id, workspace.Name, permissionsVersion=1,permissions=(long)policy.Base(user), isAdmin = policy.Has(user,Permission.ManageChannels), role = effectiveRole.ToString(), userId = user, channels = channels.Select(c => new {c.Id,c.Name,permissions=(long)policy.In(user,c.Id),version=policy.Channels[c.Id].Version,lastMessageId=heads.GetValueOrDefault(c.Id)}), voiceChannels=voiceChannels.Select(c=>new{c.Id,c.Name,c.Temporary,permissions=(long)policy.In(user,c.Id),version=policy.Channels[c.Id].Version}) });
         });
         api.MapPut("/workspace", async (NewChannel input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             await using var tx = await Permissions.BeginChange(db, ct);
-            if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 2) return Results.Forbid();
+            if (!await ChannelPermissions.From(ctx).Has(ctx,Permission.ManageServer)) return Results.Forbid();
             var name = input.Name?.Trim().Normalize();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || name.Any(c => char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format)) return Results.BadRequest();
             await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891321)", ct);
@@ -102,7 +106,7 @@ public static class ChatEndpoints
         });
         api.MapGet("/channels/{channelId:guid}/messages", async (Guid channelId, long? before, long? thread, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
-            if (!await Access(db, channelId, UserId(ctx), ct)) return Results.NotFound();
+            if (!await Access(ctx,db, channelId, UserId(ctx), ct)) return Results.NotFound();
             var ids = await db.Messages.Where(x => x.ChannelId == channelId && x.ThreadRootId == thread && (!before.HasValue || x.Id < before.Value))
                 .OrderByDescending(x => x.Id).Take(51).Select(x => x.Id).ToListAsync(ct);
             var hasMore = ids.Count > 50; var pageIds = ids.Take(50).ToArray();
@@ -112,7 +116,8 @@ public static class ChatEndpoints
         api.MapPost("/channels/{channelId:guid}/messages", async (Guid channelId, SendMessage input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             var user = UserId(ctx);
-            if (!await Access(db, channelId, user, ct)) return Results.NotFound();
+            if (!await Access(ctx,db, channelId, user, ct)) return Results.NotFound();
+            if(input.ThreadRootId.HasValue&&!await ChannelPermissions.From(ctx).Has(ctx,Permission.CreateThreads,channelId))return Results.Forbid();
             if (!ValidBody(input.Body) || input.ClientId == Guid.Empty) return Results.BadRequest();
             var existing = await db.Messages.AsNoTracking().SingleOrDefaultAsync(x => x.AuthorId == user && x.ClientId == input.ClientId, ct);
             if (existing is not null) return existing.ChannelId == channelId && existing.ThreadRootId == input.ThreadRootId ? Results.Ok(await Views(db, x => x.Id == existing.Id).SingleAsync(ct)) : Results.Conflict();
@@ -131,13 +136,13 @@ public static class ChatEndpoints
         });
         api.MapGet("/channels/{channelId:guid}/messages/{id:long}", async (Guid channelId, long id, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) =>
         {
-            if (!await Access(db, channelId, UserId(ctx), ct)) return Results.NotFound();
+            if (!await Access(ctx,db, channelId, UserId(ctx), ct)) return Results.NotFound();
             var message = await Views(db, m => m.Id == id && m.ChannelId == channelId).SingleOrDefaultAsync(ct);
             return message is null ? Results.NotFound() : Results.Ok(message);
         });
         api.MapPut("/channels/{channelId:guid}/messages/{id:long}", async (Guid channelId, long id, EditMessage input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
-            if (!await Access(db, channelId, UserId(ctx), ct)) return Results.NotFound();
+            if (!await Access(ctx,db, channelId, UserId(ctx), ct)) return Results.NotFound();
             if (!ValidBody(input.Body) || input.Version < 1) return Results.BadRequest();
             var changed = await db.Messages.Where(x => x.Id == id && x.ChannelId == channelId && x.AuthorId == UserId(ctx) && x.DeletedAt == null && x.Version == input.Version)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Body, input.Body.Trim()).SetProperty(x => x.EditedAt, DateTimeOffset.UtcNow).SetProperty(x => x.Version, x => x.Version + 1), ct);
@@ -148,9 +153,9 @@ public static class ChatEndpoints
         });
         api.MapDelete("/channels/{channelId:guid}/messages/{id:long}", async (Guid channelId, long id, long version, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
-            if (!await Access(db, channelId, UserId(ctx), ct)) return Results.NotFound();
+            if (!await Access(ctx,db, channelId, UserId(ctx), ct)) return Results.NotFound();
             await using var tx = await Permissions.BeginChange(db, ct);
-            var moderator = Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) >= 1;
+            var moderator = await ChannelPermissions.From(ctx).Has(ctx,Permission.ManageMessages,channelId);
             var changed = await db.Messages.Where(x => x.Id == id && x.ChannelId == channelId && (x.AuthorId == UserId(ctx) || moderator) && x.DeletedAt == null && x.Version == version)
                 .ExecuteUpdateAsync(set => set.SetProperty(x => x.Body, "").SetProperty(x => x.DeletedAt, DateTimeOffset.UtcNow).SetProperty(x => x.Version, x => x.Version + 1), ct);
             if (changed != 1) return Results.Conflict();

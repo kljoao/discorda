@@ -40,6 +40,7 @@ public sealed class MediaTests(AuthFixture fixture) : IClassFixture<AuthFixture>
     public async Task ReadyMustMatchCurrentConnectedLeaseAndOccupiedTemporaryRoomDoesNotExpire()
     {
         await using var app = App(); var (client, _) = await Member(app); using var member = client;
+        var workspace=await client.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");await fixture.GrantChannelCreation(workspace.GetProperty("userId").GetGuid());
         var room = await (await client.PostAsJsonAsync("/api/v1/chat/temporary-rooms", new { name = "Occupied" })).Content.ReadFromJsonAsync<JsonElement>();
         var channel = room.GetProperty("id").GetGuid();
         var grant = await (await client.PostAsJsonAsync("/api/v1/chat/media/join", new MediaCommand(channel, null))).Content.ReadFromJsonAsync<JsonElement>();
@@ -99,6 +100,24 @@ public sealed class MediaTests(AuthFixture fixture) : IClassFixture<AuthFixture>
                 : request.RequestUri.AbsolutePath.EndsWith("ListParticipants", StringComparison.Ordinal) ? new { participants = Identity is null ? Array.Empty<object>() : new object[] { new { identity = Identity, name = "Old name" } } } : new { };
             return new HttpResponseMessage(HttpStatusCode.OK) { Content = JsonContent.Create(response) };
         }
+    }
+
+    [Fact]
+    public async Task ChannelRulesRestrictMediaTokenSourcesAndRevokeExistingLease()
+    {
+        await using var app=App();var (client,_)=await Member(app);using var member=client;
+        var workspace=await client.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");var user=workspace.GetProperty("userId").GetGuid();
+        await using var db=fixture.Database();
+        var rule=new Discorda.Core.Workspaces.ChannelPermissionOverwrite{ChannelId=Voice,UserId=user,Deny=Discorda.Core.Workspaces.Permission.Speak|Discorda.Core.Workspaces.Permission.Camera|Discorda.Core.Workspaces.Permission.ShareScreen};
+        db.ChannelPermissionOverwrites.Add(rule);await db.SaveChangesAsync();
+        var response=await client.PostAsJsonAsync("/api/v1/chat/media/join",new MediaCommand(Voice,null));response.EnsureSuccessStatusCode();
+        var grant=await response.Content.ReadFromJsonAsync<JsonElement>();var token=new JwtSecurityTokenHandler().ReadJwtToken(grant.GetProperty("token").GetString());
+        var video=JsonSerializer.SerializeToElement(token.Payload["video"]);Assert.False(video.GetProperty("canPublish").GetBoolean());Assert.Empty(video.GetProperty("canPublishSources").EnumerateArray());
+        var lease=grant.GetProperty("leaseId").GetGuid();var media=app.Services.GetRequiredService<MediaService>();Assert.Equal(Voice,media.ChannelOf(user));
+        rule.Deny|=Discorda.Core.Workspaces.Permission.ConnectVoice;rule.Version++;await db.SaveChangesAsync();
+        Assert.Equal(HttpStatusCode.NotFound,(await client.PostAsJsonAsync("/api/v1/chat/media/join",new MediaCommand(Voice,null))).StatusCode);
+        var deadline=DateTime.UtcNow.AddSeconds(8);while(media.ChannelOf(user).HasValue&&DateTime.UtcNow<deadline)await Task.Delay(50);
+        Assert.Null(media.ChannelOf(user));Assert.Equal(HttpStatusCode.NotFound,(await client.PostAsJsonAsync("/api/v1/chat/media/pulse",new MediaCommand(Voice,lease))).StatusCode);
     }
 
     [Fact]

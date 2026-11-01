@@ -19,7 +19,7 @@ namespace Discorda.Infrastructure.Persistence.Migrations
 #pragma warning disable 612, 618
             modelBuilder
                 .HasDefaultSchema("discorda")
-                .HasAnnotation("ProductVersion", "10.0.12")
+                .HasAnnotation("ProductVersion", "10.0.13")
                 .HasAnnotation("Relational:MaxIdentifierLength", 63);
 
             NpgsqlModelBuilderExtensions.UseIdentityByDefaultColumns(modelBuilder);
@@ -381,6 +381,10 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .ValueGeneratedOnAdd()
                         .HasColumnType("uuid");
 
+                    b.Property<string>("AccountDisplayName")
+                        .HasMaxLength(100)
+                        .HasColumnType("character varying(100)");
+
                     b.Property<string>("AuthIssuer")
                         .IsRequired()
                         .HasMaxLength(256)
@@ -421,6 +425,51 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .IsUnique();
 
                     b.ToTable("users", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.ChannelPermissionOverwrite", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Allow")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("ChannelId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Deny")
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid?>("RoleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid?>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("RoleId");
+
+                    b.HasIndex("UserId");
+
+                    b.HasIndex("ChannelId", "RoleId")
+                        .IsUnique()
+                        .HasFilter("\"RoleId\" IS NOT NULL");
+
+                    b.HasIndex("ChannelId", "UserId")
+                        .IsUnique()
+                        .HasFilter("\"UserId\" IS NOT NULL");
+
+                    b.ToTable("channel_permission_overwrites", "discorda", t =>
+                        {
+                            t.HasCheckConstraint("ck_channel_overwrite", "(\"RoleId\" IS NULL) <> (\"UserId\" IS NULL) AND \"Allow\" BETWEEN 0 AND 36863 AND \"Deny\" BETWEEN 0 AND 36863 AND ((\"Allow\" | \"Deny\") & 225280) = 0 AND (\"Allow\" & \"Deny\") = 0 AND \"Version\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("Discorda.Core.Workspaces.JoinRequest", b =>
@@ -466,6 +515,65 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                     b.HasIndex("Status", "CreatedAt");
 
                     b.ToTable("join_requests", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.MemberPermissionRole", b =>
+                {
+                    b.Property<Guid>("RoleId")
+                        .HasColumnType("uuid");
+
+                    b.Property<Guid>("UserId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("RoleId", "UserId");
+
+                    b.HasIndex("UserId");
+
+                    b.ToTable("member_permission_roles", "discorda");
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.PermissionRole", b =>
+                {
+                    b.Property<Guid>("Id")
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("uuid");
+
+                    b.Property<string>("Color")
+                        .IsRequired()
+                        .HasMaxLength(7)
+                        .HasColumnType("character varying(7)");
+
+                    b.Property<bool>("IsEveryone")
+                        .HasColumnType("boolean");
+
+                    b.Property<string>("Name")
+                        .IsRequired()
+                        .HasMaxLength(40)
+                        .HasColumnType("character varying(40)");
+
+                    b.Property<long>("Permissions")
+                        .HasColumnType("bigint");
+
+                    b.Property<int>("Position")
+                        .HasColumnType("integer");
+
+                    b.Property<long>("Version")
+                        .IsConcurrencyToken()
+                        .HasColumnType("bigint");
+
+                    b.Property<Guid>("WorkspaceId")
+                        .HasColumnType("uuid");
+
+                    b.HasKey("Id");
+
+                    b.HasIndex("WorkspaceId", "IsEveryone")
+                        .IsUnique()
+                        .HasFilter("\"IsEveryone\" = true");
+
+                    b.ToTable("permission_roles", "discorda", t =>
+                        {
+                            t.HasCheckConstraint("ck_permission_role", "\"Permissions\" BETWEEN 0 AND 262143 AND \"Position\" BETWEEN 0 AND 99 AND \"Version\" > 0");
+                        });
                 });
 
             modelBuilder.Entity("Discorda.Core.Workspaces.ServerInvite", b =>
@@ -553,6 +661,12 @@ namespace Discorda.Infrastructure.Persistence.Migrations
 
                     b.Property<DateTimeOffset>("JoinedAt")
                         .HasColumnType("timestamp with time zone");
+
+                    b.Property<long>("PermissionVersion")
+                        .IsConcurrencyToken()
+                        .ValueGeneratedOnAdd()
+                        .HasColumnType("bigint")
+                        .HasDefaultValue(1L);
 
                     b.Property<string>("Role")
                         .IsRequired()
@@ -704,11 +818,54 @@ namespace Discorda.Infrastructure.Persistence.Migrations
                         .IsRequired();
                 });
 
+            modelBuilder.Entity("Discorda.Core.Workspaces.ChannelPermissionOverwrite", b =>
+                {
+                    b.HasOne("Discorda.Core.Channels.Channel", null)
+                        .WithMany()
+                        .HasForeignKey("ChannelId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Workspaces.PermissionRole", null)
+                        .WithMany()
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Cascade);
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade);
+                });
+
             modelBuilder.Entity("Discorda.Core.Workspaces.JoinRequest", b =>
                 {
                     b.HasOne("Discorda.Core.Workspaces.ServerInvite", null)
                         .WithMany()
                         .HasForeignKey("InviteId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.MemberPermissionRole", b =>
+                {
+                    b.HasOne("Discorda.Core.Workspaces.PermissionRole", null)
+                        .WithMany()
+                        .HasForeignKey("RoleId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+
+                    b.HasOne("Discorda.Core.Users.User", null)
+                        .WithMany()
+                        .HasForeignKey("UserId")
+                        .OnDelete(DeleteBehavior.Cascade)
+                        .IsRequired();
+                });
+
+            modelBuilder.Entity("Discorda.Core.Workspaces.PermissionRole", b =>
+                {
+                    b.HasOne("Discorda.Core.Workspaces.Workspace", null)
+                        .WithMany()
+                        .HasForeignKey("WorkspaceId")
                         .OnDelete(DeleteBehavior.Cascade)
                         .IsRequired();
                 });

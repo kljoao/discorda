@@ -39,6 +39,7 @@ public sealed class MemberAccess(DiscordaDbContext database)
                 if (session is null) database.ApplicationSessions.Add(new ApplicationSession { Id = sessionId, UserId = user.Id });
                 user.Email = identity.Email;
                 user.AvatarUrl = identity.AvatarUrl;
+                user.AccountDisplayName = identity.DisplayName;
                 user.DisplayName = user.CustomDisplayName ?? identity.DisplayName;
                 if (user.LastSeenAt is null || user.LastSeenAt < DateTimeOffset.UtcNow.AddMinutes(-1)) user.LastSeenAt = DateTimeOffset.UtcNow;
                 await database.SaveChangesAsync(cancellationToken);

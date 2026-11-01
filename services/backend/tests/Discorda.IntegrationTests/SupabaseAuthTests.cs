@@ -24,25 +24,32 @@ namespace Discorda.IntegrationTests;
 public sealed class AuthFixture : IAsyncLifetime
 {
     public const string Issuer = "https://auth-test.supabase.co/auth/v1";
-    public readonly PostgreSqlContainer Postgres = new PostgreSqlBuilder("postgres:17.11-alpine3.23").Build();
+    public readonly TestDatabase Postgres = new();
     private readonly RSA _rsa = RSA.Create(2048);
     public RsaSecurityKey Key { get; }
     private string _runtimeConnection = "";
     public AuthFixture() { Key = new RsaSecurityKey(_rsa) { KeyId = "test-signing-key" }; }
     public DiscordaDbContext Database() => new(new DbContextOptionsBuilder<DiscordaDbContext>()
         .UseNpgsql(Postgres.GetConnectionString(), options => options.MigrationsHistoryTable("__EFMigrationsHistory", "discorda")).Options);
+    public async Task GrantChannelCreation(Guid user)
+    {
+        await using var db=Database();
+        var role=new Discorda.Core.Workspaces.PermissionRole{WorkspaceId=Discorda.Api.Chat.ChatEndpoints.GroupId,Name="test "+Guid.NewGuid().ToString("N"),Permissions=Discorda.Core.Workspaces.Permission.ManageChannels};
+        db.PermissionRoles.Add(role);db.MemberPermissionRoles.Add(new(){RoleId=role.Id,UserId=user});await db.SaveChangesAsync();
+    }
     public async Task InitializeAsync()
     {
         await Postgres.StartAsync(); await using var db = Database(); await db.Database.MigrateAsync();
+        var runtimeRole="discorda_runtime_"+Guid.NewGuid().ToString("N");
         var password = Convert.ToHexString(RandomNumberGenerator.GetBytes(32));
         await using (var tx = await db.Database.BeginTransactionAsync())
         {
             await db.Database.ExecuteSqlInterpolatedAsync($"SELECT set_config('discorda.runtime_password', {password}, true)");
-            await db.Database.ExecuteSqlRawAsync(RuntimeDatabasePermissions.CreateSql("discorda_runtime", password));
+            await db.Database.ExecuteSqlRawAsync(RuntimeDatabasePermissions.CreateSql(runtimeRole, password));
             await tx.CommitAsync();
         }
-        await db.Database.ExecuteSqlRawAsync(RuntimeDatabasePermissions.GrantSql("discorda_runtime"));
-        _runtimeConnection = new Npgsql.NpgsqlConnectionStringBuilder(Postgres.GetConnectionString()) { Username = "discorda_runtime", Password = password }.ConnectionString;
+        await db.Database.ExecuteSqlRawAsync(RuntimeDatabasePermissions.GrantSql(runtimeRole));
+        _runtimeConnection = new Npgsql.NpgsqlConnectionStringBuilder(Postgres.GetConnectionString()) { Username = runtimeRole, Password = password }.ConnectionString;
     }
     public async Task DisposeAsync() { await Postgres.DisposeAsync(); _rsa.Dispose(); }
 

@@ -1,3 +1,5 @@
+using Discorda.Core.Workspaces;
+using Discorda.Api.Admin;
 using Discorda.Api.Auth;
 using Discorda.Core.Channels;
 using Discorda.Infrastructure.Persistence;
@@ -13,10 +15,11 @@ public static class Attachments
     public static void MapAttachments(this WebApplication app)
     {
         var api = app.MapGroup("/api/v1/chat/channels/{channelId:guid}/attachments").RequireAuthorization("Member").RequireRateLimiting("attachments");
+        api.AddEndpointFilter(ChannelPermissions.Guard);
         api.MapPost("", async (Guid channelId, UploadAttachment input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             var user = ((MemberProfile)ctx.Items[typeof(MemberProfile)]!).Id;
-            if (!await ChatEndpoints.Access(db, channelId, user, ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, user, ct)) return Results.NotFound();
             if (input.ClientId == Guid.Empty || string.IsNullOrWhiteSpace(input.Name) || input.Name.Length > 180 || input.Name.Any(c => char.IsControl(c) || "/\\:".Contains(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format)
                 || input.Content is null || input.Content.Length > (MaxBytes + 2) / 3 * 4) return Results.BadRequest();
             byte[] bytes;
@@ -46,7 +49,7 @@ public static class Attachments
         api.MapGet("/{id:guid}", async (Guid channelId, Guid id, bool? download, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) =>
         {
             var user = ((MemberProfile)ctx.Items[typeof(MemberProfile)]!).Id;
-            if (!await ChatEndpoints.Access(db, channelId, user, ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, user, ct)) return Results.NotFound();
             var file = await (from a in db.MessageAttachments.AsNoTracking() join m in db.Messages on a.MessageId equals m.Id
                 where a.Id == id && m.ChannelId == channelId && m.DeletedAt == null select a).SingleOrDefaultAsync(ct);
             ctx.Response.Headers.CacheControl = "no-store";

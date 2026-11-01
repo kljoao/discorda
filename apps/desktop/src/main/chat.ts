@@ -26,7 +26,21 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
   if(a.kind==='audit'&&(a.before===undefined||numberId(a.before)))return;
   if(a.kind==='role'&&typeof a.userId==='string'&&guid.test(a.userId)&&['Admin','Moderator','Member'].includes(String(a.role)))return;
   if(a.kind==='moderateVoice'&&typeof a.userId==='string'&&guid.test(a.userId)&&(a.channelId===undefined||(typeof a.channelId==='string'&&guid.test(a.channelId))))return;
-  if (a.kind === 'members' || a.kind === 'workspace' || a.kind === 'voiceRoster') return;
+  if(a.kind==='members'&&(a.channelId===undefined||(typeof a.channelId==='string'&&guid.test(a.channelId))))return;
+  if (a.kind === 'workspace' || a.kind === 'voiceRoster') return;
+  const uuid=(v:unknown)=>typeof v==='string'&&guid.test(v);
+  const version=(v:unknown)=>Number.isSafeInteger(v)&&Number(v)>=0;
+  const bits=(v:unknown,max=262143)=>Number.isSafeInteger(v)&&Number(v)>=0&&Number(v)<=max;
+  if(a.kind==='permissionRoles')return;
+  if(a.kind==='permissionRoleSave'&&(a.id===undefined||uuid(a.id))&&text(a.name,40)&&typeof a.color==='string'&&/^#[a-f0-9]{6}$/i.test(a.color)&&Number.isInteger(a.position)&&Number(a.position)>=0&&Number(a.position)<=99&&bits(a.permissions)&&version(a.version))return;
+  if(a.kind==='permissionRoleDelete'&&uuid(a.id)&&version(a.version))return;
+  if(a.kind==='permissionAssign'&&uuid(a.userId)&&Array.isArray(a.roleIds)&&a.roleIds.length<=49&&a.roleIds.every(uuid)&&new Set(a.roleIds).size===a.roleIds.length&&version(a.version))return;
+  if(uuid(a.channelId)){
+    if(a.kind==='channelPolicy')return;
+    if(a.kind==='channelRuleSave'&&['role','member'].includes(String(a.targetType))&&uuid(a.targetId)&&bits(a.allow,36863)&&bits(a.deny,36863)&&(Number(a.allow)&Number(a.deny))===0&&((Number(a.allow)|Number(a.deny))&~36863)===0&&version(a.version))return;
+    if(a.kind==='channelRuleDelete'&&uuid(a.id)&&version(a.version))return;
+    if(a.kind==='channelSettings'&&text(a.name,80)&&version(a.version)&&(a.archived===undefined||typeof a.archived==='boolean'))return;
+  }
   if (a.kind === 'profile' && text(a.displayName, 32)) return;
   if (a.kind === 'renameWorkspace' && text(a.name,80) && !/[\p{Cc}\p{Cf}]/u.test(String(a.name))) return;
   if (a.kind === 'temporaryRoom' && text(a.name,40)) return;
@@ -52,6 +66,14 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
 export async function chatAction(auth: AuthController, value: unknown): Promise<ChatResult> {
   validateChatAction(value);
   const action = value;
+  if(action.kind==='permissionRoles')return auth.chatRequest('/permissions');
+  if(action.kind==='permissionRoleSave')return auth.chatRequest('/permissions/roles'+(action.id?'/'+action.id:''),action.id?'PUT':'POST',{name:action.name,color:action.color,position:action.position,permissions:action.permissions,version:action.version});
+  if(action.kind==='permissionRoleDelete')return auth.chatRequest('/permissions/roles/'+action.id+'?version='+action.version,'DELETE');
+  if(action.kind==='permissionAssign')return auth.chatRequest('/permissions/members/'+action.userId,'PUT',{roleIds:action.roleIds,version:action.version});
+  if(action.kind==='channelPolicy')return auth.chatRequest('/channels/'+action.channelId+'/permissions');
+  if(action.kind==='channelRuleSave')return auth.chatRequest('/channels/'+action.channelId+'/permissions','PUT',{targetType:action.targetType,targetId:action.targetId,allow:action.allow,deny:action.deny,version:action.version});
+  if(action.kind==='channelRuleDelete')return auth.chatRequest('/channels/'+action.channelId+'/permissions/'+action.id+'?version='+action.version,'DELETE');
+  if(action.kind==='channelSettings')return auth.chatRequest('/channels/'+action.channelId+'/settings','PUT',{name:action.name,version:action.version,archived:action.archived??false});
   if(action.kind==='voiceSend')return sendVoiceMessage(auth,action);
   if(action.kind==='attachmentStage'||action.kind==='attachmentTransfer'||action.kind==='attachmentProgress'||action.kind==='attachmentCancel')return stagedAttachmentAction(auth,action);
   if(action.kind==='catchUp')return auth.chatRequest('/catch-up'+(action.since?'?since='+encodeURIComponent(action.since):''));
@@ -66,7 +88,7 @@ export async function chatAction(auth: AuthController, value: unknown): Promise<
     await shell.openExternal(action.url); return { ok: true, data: null };
   }
   if (action.kind === 'profile') return auth.chatRequest('/profile', 'PUT', {displayName: action.displayName});
-  if (action.kind === 'members') return auth.chatRequest('/members');
+  if (action.kind === 'members') return auth.chatRequest('/members'+(action.channelId?'?channelId='+action.channelId:''));
   if (action.kind === 'voiceRoster') return auth.chatRequest('/media/roster');
   if (action.kind === 'renameWorkspace') return auth.chatRequest('/workspace','PUT',{name:action.name});
   if (action.kind === 'workspace') return auth.chatRequest('/workspace');

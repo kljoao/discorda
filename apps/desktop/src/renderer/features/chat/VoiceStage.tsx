@@ -11,7 +11,7 @@ import './voice-stage.css';
 
 type Layout='focus'|'overview'|'mosaic';
 type Props={
-  name:string;connecting?:boolean;reconnecting?:boolean;participants:Participant[];watching:ReadonlySet<string>;busy:boolean;deaf:boolean;testing:boolean;expanded:boolean;
+  microphoneAllowed?:boolean;cameraAllowed?:boolean;shareAllowed?:boolean;name:string;connecting?:boolean;reconnecting?:boolean;participants:Participant[];watching:ReadonlySet<string>;busy:boolean;deaf:boolean;testing:boolean;expanded:boolean;
   volumes:Record<string,MemberVolume>;memberKey:(participant:Participant)=>string;avatar:(participant:Participant)=>string|null|undefined;
   onWatch:(key:string)=>void;onStopWatching:(keys:string[])=>void;onVolume:(id:string,value:number)=>void;onMute:(id:string)=>void;
   onMemberVolume:(participant:Participant,event:MouseEvent)=>void;
@@ -116,10 +116,10 @@ export function VoiceStage(props:Props) {
       {participants.map(participant=>person(participant,true))}
     </div></div></div>}
     <footer className="room-toolbar room-hover-control"><div className="room-call-actions" role="group" aria-label="Controles da sala">
-      <button type="button" className={'room-action'+(!local?.isMicrophoneEnabled?' is-off':'')} disabled={busy||props.deaf||props.testing} aria-label={local?.isMicrophoneEnabled?'Silenciar microfone da sala':'Ligar microfone da sala'} title={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} aria-pressed={!!local?.isMicrophoneEnabled} onClick={props.onMicrophone}>{local?.isMicrophoneEnabled?<Mic size={21}/>:<MicOff size={21}/>}</button>
-      <button type="button" className="room-action" disabled={busy} aria-label={local?.isCameraEnabled?'Desligar webcam':'Ligar webcam'} title={local?.isCameraEnabled?'Desligar webcam':'Ligar webcam'} aria-pressed={!!local?.isCameraEnabled} onClick={props.onCamera}>{local?.isCameraEnabled?<Video size={21}/>:<VideoOff size={21}/>}</button>
+      <button type="button" className={'room-action'+(!local?.isMicrophoneEnabled?' is-off':'')} disabled={busy||props.deaf||props.testing||props.microphoneAllowed===false} aria-label={local?.isMicrophoneEnabled?'Silenciar microfone da sala':'Ligar microfone da sala'} title={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} aria-pressed={!!local?.isMicrophoneEnabled} onClick={props.onMicrophone}>{local?.isMicrophoneEnabled?<Mic size={21}/>:<MicOff size={21}/>}</button>
+      <button type="button" className="room-action" disabled={busy||props.cameraAllowed===false} aria-label={local?.isCameraEnabled?'Desligar webcam':'Ligar webcam'} title={local?.isCameraEnabled?'Desligar webcam':'Ligar webcam'} aria-pressed={!!local?.isCameraEnabled} onClick={props.onCamera}>{local?.isCameraEnabled?<Video size={21}/>:<VideoOff size={21}/>}</button>
       <span className="room-control-divider"/>
-      <button type="button" className="room-action" disabled={busy} aria-label={local?.isScreenShareEnabled?'Encerrar minha transmissão':'Compartilhar minha tela'} title={local?.isScreenShareEnabled?'Encerrar minha transmissão':'Compartilhar tela'} aria-pressed={!!local?.isScreenShareEnabled} onClick={props.onShare}><MonitorUp size={21}/></button>
+      <button type="button" className="room-action" disabled={busy||props.shareAllowed===false} aria-label={local?.isScreenShareEnabled?'Encerrar minha transmissão':'Compartilhar minha tela'} title={local?.isScreenShareEnabled?'Encerrar minha transmissão':'Compartilhar tela'} aria-pressed={!!local?.isScreenShareEnabled} onClick={props.onShare}><MonitorUp size={21}/></button>
       {!!targets.length&&<button type="button" className="room-action room-stop-watching" aria-label="Parar de visualizar" title={targets.length>1?'Parar de visualizar estas transmissões':'Parar de visualizar'} onClick={()=>stop(targets)}><EyeOff size={21}/></button>}
       <button type="button" className="room-action room-disconnect" aria-label="Desconectar da sala" title="Sair da chamada" onClick={props.onLeave}><PhoneOff size={21}/></button>
     </div></footer>

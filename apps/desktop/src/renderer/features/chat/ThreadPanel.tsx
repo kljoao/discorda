@@ -9,7 +9,7 @@ import {MessageFiles} from './Attachments';
 import {formatMentions} from './mention-text';
 import {scopedKey} from '../../lib/server-scope';
 const drafts=new Map<string,{body:string;clientId?:string;replyToId?:string}>();
-export function ThreadPanel({root,close,presence,userId,canModerate,targetId,visible=true}:{visible?:boolean;targetId?:string;root:ChatMessage;close:()=>void;presence:PresenceMember[];userId:string;canModerate:boolean}){
+export function ThreadPanel({root,close,presence,userId,canModerate,targetId,visible=true,canReply=true}:{canReply?:boolean;visible?:boolean;targetId?:string;root:ChatMessage;close:()=>void;presence:PresenceMember[];userId:string;canModerate:boolean}){
  useEffect(()=>{if(root.deletedAt)close();},[root.deletedAt]);
  const [following,setFollowing]=useState(false),[followBusy,setFollowBusy]=useState(false);
  useEffect(()=>{let alive=true;void window.discorda?.chat({kind:'threadFollow',channelId:root.channelId,id:root.id}).then(r=>{if(alive&&r.ok)setFollowing((r.data as {enabled:boolean}).enabled);});return()=>{alive=false;};},[root.id]);
@@ -40,7 +40,7 @@ export function ThreadPanel({root,close,presence,userId,canModerate,targetId,vis
   });const timer=setInterval(()=>{if(!historical.current&&document.visibilityState==='visible')void load();},30000);
   return()=>{alive.current=false;off?.();clearInterval(timer);};
  },[root.id,targetId]);
- async function send(){
+ async function send(){if(!canReply)return;
   if(busy||!draft.trim())return;setBusy(true);setError('');
   if(!editing){pending.current??={clientId:crypto.randomUUID(),body:draft,replyToId:reply?.id??root.id};drafts.set(key,pending.current);}
   try{
@@ -59,16 +59,16 @@ export function ThreadPanel({root,close,presence,userId,canModerate,targetId,vis
    {more&&<button disabled={loading} onClick={()=>void load(items[0]?.id)}>Respostas anteriores</button>}
    {historical.current&&<button onClick={()=>void load(undefined,true)}>Voltar às respostas recentes</button>}
    {loading&&!items.length&&<p>Carregando tópico…</p>}{!loading&&!items.length&&<p>Aprofunde essa conversa aqui.</p>}
-   {items.filter(m=>!m.deletedAt).map(m=><article data-inbox-id={m.id} key={m.id}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time><p>{formatMentions(m.body,names).text}</p><MessageFiles message={m} avatarUrl={names.get(m.authorId)?.avatarUrl} onReply={()=>{setReply(m);setEditing(undefined);input.current?.focus();}} onDelete={m.authorId===userId||canModerate?()=>setRemoving(m.id):undefined}/>
-    {!m.deletedAt&&<div className="thread-actions"><MessageAction label="Responder" disabled={busy||!!pending.current} onClick={()=>{setReply(m);setEditing(undefined);input.current?.focus();}}><Reply size={16}/></MessageAction>{m.authorId===userId&&<MessageAction label="Editar" disabled={busy||!!pending.current} onClick={()=>{setEditing(m);setReply(undefined);setDraft(m.body);input.current?.focus();}}><Pencil size={16}/></MessageAction>}{(m.authorId===userId||canModerate)&&<MessageAction label="Excluir" danger disabled={busy} onClick={()=>setRemoving(m.id)}><Trash2 size={16}/></MessageAction>}</div>}
+   {items.filter(m=>!m.deletedAt).map(m=><article data-inbox-id={m.id} key={m.id}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time><p>{formatMentions(m.body,names).text}</p><MessageFiles message={m} avatarUrl={names.get(m.authorId)?.avatarUrl} onReply={canReply?()=>{setReply(m);setEditing(undefined);input.current?.focus();}:undefined} onDelete={m.authorId===userId||canModerate?()=>setRemoving(m.id):undefined}/>
+    {!m.deletedAt&&<div className="thread-actions"><MessageAction label="Responder" disabled={busy||!!pending.current||!canReply} onClick={()=>{setReply(m);setEditing(undefined);input.current?.focus();}}><Reply size={16}/></MessageAction>{m.authorId===userId&&canReply&&<MessageAction label="Editar" disabled={busy||!!pending.current} onClick={()=>{setEditing(m);setReply(undefined);setDraft(m.body);input.current?.focus();}}><Pencil size={16}/></MessageAction>}{(m.authorId===userId||canModerate)&&<MessageAction label="Excluir" danger disabled={busy} onClick={()=>setRemoving(m.id)}><Trash2 size={16}/></MessageAction>}</div>}
     {removing===m.id&&<div>Excluir resposta?<button disabled={busy} onClick={()=>void remove(m)}>Confirmar</button><button onClick={()=>setRemoving(undefined)}>Cancelar</button></div>}
    </article>)}
   </div>
   {error&&<p role="alert">{error}<button onClick={()=>void load()}>Atualizar</button></p>}
   <form onSubmit={e=>{e.preventDefault();void send();}}>
    {(reply||editing)&&<small>{editing?'Editando resposta':'Respondendo a '+reply?.authorName}<button type="button" disabled={busy||!!pending.current} onClick={()=>{setReply(undefined);setEditing(undefined);setDraft(drafts.get(key)?.body??'');}}>Cancelar</button></small>}
-   <textarea ref={input} aria-label="Resposta no tópico" placeholder="Responder no tópico" maxLength={4000} value={draft} readOnly={busy||!!pending.current} onChange={e=>editing?setDraft(e.target.value):change(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send();}}}/>
-   <button disabled={busy||!draft.trim()||!!root.deletedAt}>{busy?'Enviando…':pending.current?'Tentar novamente':editing?'Salvar':'Responder'}</button>
+   <textarea ref={input} aria-label="Resposta no tópico" placeholder="Responder no tópico" maxLength={4000} value={draft} readOnly={busy||!!pending.current||!canReply} onChange={e=>editing?setDraft(e.target.value):change(e.target.value)} onKeyDown={e=>{if(e.key==='Enter'&&!e.shiftKey&&!e.nativeEvent.isComposing){e.preventDefault();void send();}}}/>
+   <button disabled={busy||!draft.trim()||!!root.deletedAt||!canReply}>{busy?'Enviando…':pending.current?'Tentar novamente':editing?'Salvar':'Responder'}</button>
   </form>
  </aside>;
 }

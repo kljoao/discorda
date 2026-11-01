@@ -28,6 +28,9 @@ public static class Permissions
         if (AdminEndpoints.IsAdmin(ctx, config)) return MemberRole.Owner;
         var role = await db.WorkspaceMembers.Where(m => m.WorkspaceId == ChatEndpoints.GroupId && m.UserId == User(ctx)).Select(m => m.Role).FirstOrDefaultAsync(ct);
         // Persisted Owner is never authority: only private host configuration grants ownership.
+        var policy=await ChannelPermissions.From(ctx).Load(ct);var flags=policy.Base(User(ctx));
+        if((flags&Permission.Administrator)!=0)return MemberRole.Admin;
+        if((flags&(Permission.ManageMessages|Permission.ModerateVoice))!=0)return MemberRole.Moderator;
         return role == MemberRole.Owner ? MemberRole.Member : role;
     }
     public static async Task<MemberRole> TargetRole(Guid user, IConfiguration config, DiscordaDbContext db, CancellationToken ct)
@@ -35,6 +38,9 @@ public static class Permissions
         var email = await db.Users.Where(x => x.Id == user).Select(x => x.Email).FirstOrDefaultAsync(ct);
         if (!string.IsNullOrWhiteSpace(config["Admin:Email"]) && string.Equals(email, config["Admin:Email"], StringComparison.OrdinalIgnoreCase)) return MemberRole.Owner;
         var role = await db.WorkspaceMembers.Where(m => m.WorkspaceId == ChatEndpoints.GroupId && m.UserId == user).Select(m => m.Role).FirstOrDefaultAsync(ct);
+        var policy=await ChannelPermissions.Read(db,config,ct);var flags=policy.Base(user);
+        if((flags&Permission.Administrator)!=0)return MemberRole.Admin;
+        if((flags&(Permission.ManageMessages|Permission.ModerateVoice))!=0)return MemberRole.Moderator;
         return role == MemberRole.Owner ? MemberRole.Member : role;
     }
     public static void Audit(DiscordaDbContext db, HttpContext ctx, string action, string target) =>

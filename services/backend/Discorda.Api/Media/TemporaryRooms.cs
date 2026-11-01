@@ -1,3 +1,5 @@
+using Discorda.Api.Admin;
+using Discorda.Core.Workspaces;
 using Discorda.Api.Auth;
 using Discorda.Api.Chat;
 using Discorda.Core.Channels;
@@ -13,6 +15,7 @@ public static class TemporaryRooms
         app.MapPost("/api/v1/chat/temporary-rooms", async (NewChannel input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) =>
         {
             var user = ((MemberProfile)ctx.Items[typeof(MemberProfile)]!).Id;
+            if(!await ChannelPermissions.From(ctx).Has(ctx,Permission.ManageChannels))return Results.Forbid();
             var name = input.Name?.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 40 || name.Any(c => char.IsControl(c) || char.GetUnicodeCategory(c) == System.Globalization.UnicodeCategory.Format)) return Results.BadRequest();
             if (!await db.WorkspaceMembers.AnyAsync(m => m.UserId == user && m.WorkspaceId == ChatEndpoints.GroupId, ct)) return Results.Forbid();

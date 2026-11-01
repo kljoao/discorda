@@ -1,3 +1,7 @@
+import {MemberList} from './MemberList';
+import {PermissionRoles} from './PermissionRoles';
+import {ChannelPermissions} from './ChannelPermissions';
+import {permission,can} from '../../../shared/permissions';
 import {beforeUpdate} from '../../lib/update-checkpoint';
 import {useVisibleReceipt} from './visible-receipt';
 import {useVoiceComposer} from './VoiceComposer';
@@ -18,7 +22,7 @@ import {HistoryTools,chatRequest,reactionEmojis,type Annotations} from './ChatTo
 import { useEffect, useRef, useState, useMemo, useLayoutEffect, type ReactNode } from 'react';
 import { Avatar } from './Avatar';
 import { Voice } from './Voice';
-import { Hash, MessageCircle, Plus, Send, Reply, Pencil, Trash2, X, Smile, Users, Search, Bell, MessageSquareMore, Pin, PinOff } from 'lucide-react';
+import { Hash, MessageCircle, Plus, Send, Reply, Pencil, Trash2, X, Smile, Users, Search, Bell, MessageSquareMore, Pin, PinOff, Settings2, Shield } from 'lucide-react';
 import type { ChatAction, ChatMessage, ChatWorkspace, PresenceMember, LiveEvent } from '../../../shared/ipc/contracts';
 
 async function request<T>(action: ChatAction): Promise<T> {
@@ -52,33 +56,30 @@ export function Chat({ account }: { account: ReactNode }) {
   const attention=useChatAttention(workspace);
   const [inboxTarget,setInboxTarget]=useState<InboxItem>();
   const [adminOpen,setAdminOpen]=useState(false);
+  const [rolesOpen,setRolesOpen]=useState(false),[channelSetup,setChannelSetup]=useState<{id:string;name:string;type:'text'|'voice'}>();
   const [membersOpen,setMembersOpen]=useState(true);
-  const [memberQuery,setMemberQuery]=useState('');
   const [selected, setSelected] = useState<string>();
+  const selectedRef=useRef(selected);selectedRef.current=selected;
+  const workspaceRef=useRef(workspace);workspaceRef.current=workspace;
   const [error, setError] = useState('');
   const [newChannel,setNewChannel]=useState<'text'|'voice'>();
   const [membersState,setMembersState]=useState<'loading'|'ready'|'error'>('loading');
   const membersRevision=useRef(0);
   const [presence, setPresence] = useState<PresenceMember[]>([]);
-  const memberGroups=useMemo(()=>{
-    const groups:{online:PresenceMember[];away:PresenceMember[];offline:PresenceMember[]}={online:[],away:[],offline:[]};
-    const query=memberQuery.trim().toLocaleLowerCase('pt-BR');
-    for(const member of presence)if(member.name.toLocaleLowerCase('pt-BR').includes(query))groups[member.status].push(member);
-    return groups;
-  },[presence,memberQuery]);
   const [connection, setConnection] = useState<'connected' | 'reconnecting' | 'offline'>('reconnecting');
   const drafts = useRef(new Map<string, string>());
   const pendingSends = useRef(new Map<string, Extract<ChatAction, { kind: 'send' }>>());
   const mounted = useRef(false);
   async function loadMembers(){
-    const revision=++membersRevision.current;
+    const revision=++membersRevision.current;const target=selectedRef.current;const scoped=workspaceRef.current?.permissionsVersion===1;
+    if(scoped&&!target){setPresence([]);setMembersState('ready');return;}
     try{
-      const members=await Promise.race([request<PresenceMember[]>({kind:'members'}),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Timeout')),10000))]);
+      const members=await Promise.race([request<PresenceMember[]>({kind:'members',channelId:scoped?target:undefined}),new Promise<never>((_,reject)=>setTimeout(()=>reject(new Error('Timeout')),10000))]);
       if(!Array.isArray(members))throw new Error('Invalid members');
-      if(mounted.current&&revision===membersRevision.current){setPresence(members);setMembersState('ready');}
+      if(mounted.current&&revision===membersRevision.current&&target===selectedRef.current){setPresence(members);setMembersState('ready');}
     }catch{if(mounted.current&&revision===membersRevision.current)setMembersState('error');}
   }
-  useEffect(()=>{if(!workspace)return;void loadMembers();const timer=setInterval(()=>void loadMembers(),15000);return()=>{clearInterval(timer);membersRevision.current++;};},[workspace?.id]);
+  useEffect(()=>{if(!workspace)return;if(workspace.permissionsVersion===1){setPresence([]);setMembersState('loading');}void loadMembers();const timer=setInterval(()=>void loadMembers(),15000);return()=>{clearInterval(timer);membersRevision.current++;};},[workspace?.id,selected]);
   useEffect(()=>{if(workspace&&selected)try{localStorage.setItem(scopedKey('channel:'+workspace.userId),selected);}catch{}},[selected,workspace?.userId]);
   async function load(start = true) {
     try { const data = await request<ChatWorkspace>({ kind: 'workspace' }); if (!mounted.current) return; setWorkspace(data); setSelected(current => {let saved:string|null=null;try{saved=localStorage.getItem(scopedKey('channel:'+data.userId));}catch{}return data.channels.find(c=>c.id===(current??saved))?.id??data.channels[0]?.id;}); setError(''); if (start) await window.discorda?.startLive(); }
@@ -91,58 +92,48 @@ export function Chat({ account }: { account: ReactNode }) {
     window.addEventListener('online',online);
     const off = window.discorda?.onLiveEvent(event => {
       if (!active) return;
-      if (event.kind === 'presence') {membersRevision.current++;setPresence(event.data);setMembersState('ready');}
+      if (event.kind === 'presence'&&(workspaceRef.current?.permissionsVersion!==1||event.channelId===selectedRef.current)) {membersRevision.current++;setPresence(event.data);setMembersState('ready');}
       // REST polling owns roster availability even while the live transport reconnects.
       if (event.kind === 'connection') { setConnection(event.data); if (event.data === 'connected') {void load(false);} }
-      if (event.kind === 'channels') void load();
+      if (event.kind === 'channels') {void load(false);void loadMembers();}
     });
     void load();
     return () => { active = false; window.removeEventListener('online',online);mounted.current = false; off?.(); void window.discorda?.stopLive(); };
   }, []);
   const channel = workspace?.channels.find(c => c.id === selected);
   return <div className={'chat-shell'+(!membersOpen||showMedia?' members-collapsed':'')}>
-    <a className="skip-conversation" href="#conversation-main">Ir para a conversa</a><Servers rail currentName={workspace?.name} unread={attention.hasAttention}/><aside className="chat-sidebar"><ServerHeader workspace={workspace} onRename={()=>load(false)} onManage={()=>setAdminOpen(true)} notifications={<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.sounds} onChange={attention.toggleSounds}/> Som de menções e respostas</label><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas menções e respostas</label>}</details>}/>
+    <a className="skip-conversation" href="#conversation-main">Ir para a conversa</a><Servers rail currentName={workspace?.name} unread={attention.hasAttention}/><aside className="chat-sidebar"><ServerHeader onRoles={()=>setRolesOpen(true)} workspace={workspace} onRename={()=>load(false)} onManage={()=>setAdminOpen(true)} notifications={<details className="notification-preferences"><summary><Bell size={14}/> Notificações</summary><label className="notification-setting"><input type="checkbox" checked={attention.sounds} onChange={attention.toggleSounds}/> Som de menções e respostas</label><label className="notification-setting"><input type="checkbox" checked={attention.notifications} onChange={attention.toggleNotifications}/> Notificações do Windows</label>{attention.notifications&&<label className="notification-setting"><input type="checkbox" checked={attention.mentionsOnly} onChange={attention.toggleMentions}/> Apenas menções e respostas</label>}</details>}/>
       <div className="sidebar-scroll">
       {adminOpen&&workspace&&<ManagementPanel workspace={workspace} close={()=>setAdminOpen(false)}/>}<div className="chat-channel-label">Canais de texto{workspace?.isAdmin && <button onClick={() => setNewChannel('text')} aria-label="Criar canal de texto"><Plus size={16} /></button>}</div>
+      {rolesOpen&&<PermissionRoles close={()=>setRolesOpen(false)} changed={()=>{void load(false);void loadMembers();}}/>}
+      {channelSetup&&<ChannelPermissions channel={channelSetup} type={channelSetup.type} close={()=>setChannelSetup(undefined)} changed={()=>{void load(false);void loadMembers();}}/>}
       {newChannel&&<CreateChannel type={newChannel} close={()=>setNewChannel(undefined)} created={async id=>{await load(false);if(newChannel==='text'){setSelected(id);setShowMedia(false);}}}/>}
-      <nav aria-label="Canais">{workspace?.channels.map(item => <button key={item.id} className={!showMedia && selected === item.id ? 'selected' : ''} aria-current={!showMedia && selected === item.id ? 'page' : undefined} onClick={() => {setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>)}</nav>
-      <Voice onCreateChannel={workspace?.isAdmin?()=>setNewChannel('voice'):undefined} presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} account={account} self={presence.find(p=>p.id===workspace?.userId)}/>
+      <nav aria-label="Canais">{workspace?.channels.map(item => <div className="channel-sidebar-row" key={item.id}><button className={!showMedia && selected === item.id ? 'selected' : ''} aria-current={!showMedia && selected === item.id ? 'page' : undefined} onClick={() => {if(workspace.permissionsVersion===1&&selected!==item.id)setPresence([]);setSelected(item.id);setShowMedia(false);}}><Hash size={18} />{item.name}{attention.unread(item.id)&&<span className="unread-dot" aria-label="Mensagens não lidas">●</span>}</button>{(can(item.permissions,permission.manageChannel)||can(item.permissions,permission.managePermissions))&&<button className="channel-settings-button" aria-label={'Configurar canal '+item.name} title="Configurar canal" onClick={()=>setChannelSetup({...item,type:'text'})}><Settings2 size={14}/></button>}</div>)}</nav>
+      <Voice onConfigureChannel={item=>setChannelSetup({...item,type:'voice'})} onCreateChannel={workspace?.isAdmin?()=>setNewChannel('voice'):undefined} presence={presence} channels={workspace?.voiceChannels ?? []} userId={workspace?.userId} mediaHost={mediaHost} dockHost={dockHost} open={showMedia} setOpen={setShowMedia} account={account} self={presence.find(p=>p.id===workspace?.userId)}/>
 
       </div><div ref={setDockHost} className="sidebar-footer"/>
     </aside>
     <main id="conversation-main" tabIndex={-1} className="chat-main">{connection!=='connected'&&<div className="workspace-toolbar"><div className={`live-status ${connection}`} role="status">{connection === 'reconnecting' ? 'Reconectando… seu rascunho continua aqui.' : 'Tempo real indisponível. Tentando reconectar…'}<button onClick={()=>void window.discorda?.reconnectLive()}>Reconectar chat</button></div></div>}
       {error && <div className="chat-error" role="alert">{error} <button onClick={() => void load()}>Tentar novamente</button></div>}
       <div ref={setMediaHost} className="call-stage" hidden={!showMedia}/>
-      <div className="text-stage" hidden={showMedia}>{privateMode&&<div className="privacy-cover" role="status">Modo de privacidade ativo · conversas ocultas durante a transmissão</div>}{workspace && channel ? <Conversation channels={workspace.channels} onNavigate={message=>{setInboxTarget({...message,channelName:workspace.channels.find(c=>c.id===message.channelId)?.name??'',kind:'search',read:false,threadRootId:message.threadRootId??undefined});setSelected(message.channelId);}} inboxTarget={inboxTarget} membersOpen={membersOpen} toggleMembers={()=>setMembersOpen(!membersOpen)} readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={workspace.role!=='Member'} workspaceId={workspace.id} visible={!showMedia&&!privateMode} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : 'Carregando seu grupo…'}</div>}</div>
+      <div className="text-stage" hidden={showMedia}>{privateMode&&<div className="privacy-cover" role="status">Modo de privacidade ativo · conversas ocultas durante a transmissão</div>}{workspace && channel ? <Conversation channels={workspace.channels} onNavigate={message=>{setInboxTarget({...message,channelName:workspace.channels.find(c=>c.id===message.channelId)?.name??'',kind:'search',read:false,threadRootId:message.threadRootId??undefined});setSelected(message.channelId);}} inboxTarget={inboxTarget} membersOpen={membersOpen} toggleMembers={()=>setMembersOpen(!membersOpen)} readReady={attention.ready} readMarker={attention.read[channel.id]} canModerate={can(channel.permissions,permission.manageMessages,workspace.role!=='Member')} workspaceId={workspace.id} visible={!showMedia&&!privateMode} muted={attention.muted.includes(channel.id)} toggleMuted={()=>attention.toggleMuted(channel.id)} onRead={id=>attention.markRead(channel.id,id)} key={channel.id} channel={channel} userId={workspace.userId} drafts={drafts.current} pendingSends={pendingSends.current} presence={presence} /> : <div className="chat-empty">{error ? 'O grupo ainda não está disponível.' : workspace?'Você ainda não tem acesso a um canal de texto. Peça acesso a um administrador.':'Carregando seu grupo…'}</div>}</div>
     </main>
-    <aside id="members-list" className="members-rail" hidden={!membersOpen||showMedia} aria-label="Membros disponíveis"><div className="members-heading"><h2>Pessoas do grupo</h2><span>{presence.length}</span></div><label className="member-search"><Search size={15}/><input type="search" aria-label="Buscar membros" placeholder="Buscar pessoa" maxLength={80} value={memberQuery} onChange={e=>setMemberQuery(e.target.value)}/></label>
-      {(['online','away','offline'] as const).map(status=>{
-        const members=memberGroups[status];
-        const label=status==='online'?'Disponíveis':status==='away'?'Ausentes':'Offline';
-        return (members.length>0||status==='online')&&<section key={status} aria-label={label}>
-          <h2>{label} — {members.length}</h2>
-          {members.map(member=><div className={'member-row '+status} key={member.id}>
-            <div className="member-photo"><Avatar url={member.avatarUrl} name={member.name}/><span className={'presence-dot '+status}/></div>
-            <div><strong title={member.name}>{member.name}{member.id===workspace?.userId?' (você)':''}</strong><small>{status==='online'?'Disponível':status==='away'?'Ausente':'Offline'}</small></div>
-          </div>)}
-        </section>;
-      })}
-      {memberQuery.trim()&&!Object.values(memberGroups).some(group=>group.length)&&<p className="members-empty" role="status">Nenhuma pessoa encontrada.</p>}{membersState==='error'&&<div className="members-empty" role="status">Não foi possível atualizar a lista.<button onClick={()=>{setMembersState('loading');void loadMembers();}}>Tentar novamente</button></div>}{!presence.length&&membersState!=='error'&&<p className="members-empty">{membersState==='loading'?'Carregando membros…':'Nenhum membro para exibir.'}</p>}
-    </aside>
+    <MemberList members={presence} self={workspace?.userId} hidden={!membersOpen||showMedia||privateMode} state={membersState} retry={()=>{setMembersState('loading');void loadMembers();}}/>
   </div>;
 }
 
-function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMembers,readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {channels:{id:string;name:string}[];onNavigate:(message:ChatMessage)=>void;inboxTarget?:InboxItem;membersOpen:boolean;toggleMembers:()=>void;readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
+function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMembers,readReady,readMarker,canModerate,workspaceId, channel, userId, drafts, pendingSends, presence,visible,muted,toggleMuted,onRead }: {channels:{id:string;name:string}[];onNavigate:(message:ChatMessage)=>void;inboxTarget?:InboxItem;membersOpen:boolean;toggleMembers:()=>void;readReady:boolean;readMarker?:string;canModerate:boolean;workspaceId:string;visible:boolean;muted:boolean;toggleMuted:()=>void;onRead:(id:string)=>void; channel: { id: string; name: string;permissions?:number }; userId: string; drafts: Map<string, string>; pendingSends: Map<string, Extract<ChatAction, { kind: 'send' }>>; presence: PresenceMember[] }) {
   const [thread,setThread]=useState<ChatMessage>();
   const [messages, setMessages] = useState<ChatMessage[]>([]);
   useVisibleReceipt(inboxTarget?.threadRootId?undefined:inboxTarget?.id,visible,messages);
-  const files=useFileComposer(channel.id,message=>setMessages(old=>receive(old,[message])));
+  const files=useFileComposer(channel.id,message=>setMessages(old=>receive(old,[message])),!can(channel.permissions,permission.send|permission.attach,true));
   const historicalRef=useRef(false);
   const [historical,setHistorical]=useState(false);
   const [boundary,setBoundary]=useState<string>();
   useEffect(()=>{if(readReady&&boundary===undefined)setBoundary(readMarker??'0');},[readReady,readMarker,boundary]);
   const visibleMessages=useMemo(()=>messages.filter(message=>!message.deletedAt),[messages]);
   const firstUnread=useMemo(()=>boundary===undefined?-1:visibleMessages.findIndex(message=>message.authorId!==userId&&BigInt(message.id)>BigInt(boundary)),[visibleMessages,boundary,userId]);
+  const canSend=can(channel.permissions,permission.send,true),canReact=can(channel.permissions,permission.react,true);
   const composer=useRef<HTMLTextAreaElement>(null);
   const beforeEdit=useRef<{start:number;end:number;inputType:string}|undefined>(undefined);
   useEffect(()=>{
@@ -203,7 +194,7 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
   const [edit, setEdit] = useState<ChatMessage>();
   const [removing, setRemoving] = useState<string>();
   const [pending, setPending] = useState<Extract<ChatAction, {kind: 'send'}> | undefined>(pendingSends.get(channel.id));
-  const voice=useVoiceComposer(channel.id,message=>{nearBottom.current=true;setMessages(old=>receive(old,[message]));},busy||!!pending||!!reply||!!edit||files.hasFile||files.busy);
+  const voice=useVoiceComposer(channel.id,message=>{nearBottom.current=true;setMessages(old=>receive(old,[message]));},busy||!!pending||!!reply||!!edit||files.hasFile||files.busy||!can(channel.permissions,permission.send|permission.attach,true));
   const alive = useRef(true);
   const list = useRef<HTMLDivElement>(null);
   const scrollKey=scopedKey('reading:'+userId+':'+channel.id);
@@ -313,7 +304,7 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
   useEffect(()=>{const mark=()=>{const last=currentMessages.current.at(-1);if(!historicalRef.current&&readReady&&last&&visibleRef.current&&nearBottom.current&&document.visibilityState==='visible'&&document.hasFocus())readCallback.current(last.id);};mark();window.addEventListener('focus',mark);document.addEventListener('visibilitychange',mark);return()=>{window.removeEventListener('focus',mark);document.removeEventListener('visibilitychange',mark);};},[messages,visible,atBottom,readReady]);
   function changeDraft(value: string) { setDraft(value); drafts.set(channel.id, value); try{if(value)localStorage.setItem(draftKey,value);else localStorage.removeItem(draftKey);}catch{} void window.discorda?.liveActivity(channel.id, value.trim().length > 0); }
   async function submit(event: React.FormEvent) {
-    event.preventDefault(); if (busy || voice.active || !draft.trim()) return; setMention(undefined);setEmojis(false);setBusy(true); setError('');
+    event.preventDefault(); if (busy || voice.active || !draft.trim()||!canSend) return; setMention(undefined);setEmojis(false);setBusy(true); setError('');
     const action: ChatAction = edit ? { kind: 'edit', channelId: channel.id, id: edit.id, version: edit.version, body: draft }
       : pending ?? { kind: 'send', channelId: channel.id, clientId: crypto.randomUUID(), body: draft, replyToId: reply?.id };
     if (action.kind === 'send') { setPending(action); pendingSends.set(channel.id, action); }
@@ -347,13 +338,13 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
           <div className="message-meta"><strong>{message.authorName}</strong><time dateTime={message.createdAt} title={new Date(message.createdAt).toLocaleString('pt-BR')}>{new Date(message.createdAt).toLocaleTimeString('pt-BR', {hour: '2-digit', minute: '2-digit'})}</time>{message.editedAt && !message.deletedAt && <small>editada</small>}</div>
           {message.replyToId && <div className="message-reply"><Reply size={13} />{messageIndex.get(message.replyToId)?.body.slice(0, 100) || 'Resposta a uma mensagem anterior'}</div>}
           {!(message.attachments?.length===1&&message.body===message.attachments[0].name)&&<p>{message.body.split(/(https?:\/\/[^\s<>]+|<@[0-9a-f-]{36}>)/gi).map((part, index) => /^<@/.test(part)?<mark key={index}>@{presenceIndex.get(part.slice(2,-1))?.name??'membro'}</mark>: /^https?:\/\//.test(part) ? <button key={index} className="message-link" title="Abrir no navegador" onClick={() => void request({kind: 'openLink', url: part}).catch(e => setError(errorMessage(e)))}>{part}</button> : part)}</p>}
-          <MessageFiles message={message} avatarUrl={presenceIndex.get(message.authorId)?.avatarUrl} onReply={()=>{setReply(message);setEdit(undefined);composer.current?.focus();}} onDelete={message.authorId===userId||canModerate?()=>setRemoving(message.id):undefined}/>{!!message.threadReplyCount&&<button className="thread-link" onClick={()=>setThread(message)}>{message.threadReplyCount} resposta(s) no tópico →</button>}{!message.deletedAt&&<div className="message-reactions">{(reactionIndex.get(message.id)??[]).map(r=><button key={r.emoji} aria-pressed={r.mine} aria-label={r.emoji+' '+r.count+' reações'} onClick={()=>void annotate({kind:'reaction',channelId:channel.id,id:message.id,emoji:r.emoji,enabled:!r.mine})}>{r.emoji} {r.count}</button>)}{pinIndex.has(message.id)&&<small>📌 Fixada</small>}</div>}
+          <MessageFiles message={message} avatarUrl={presenceIndex.get(message.authorId)?.avatarUrl} onReply={canSend?()=>{setReply(message);setEdit(undefined);composer.current?.focus();}:undefined} onDelete={message.authorId===userId||canModerate?()=>setRemoving(message.id):undefined}/>{!!message.threadReplyCount&&<button className="thread-link" onClick={()=>setThread(message)}>{message.threadReplyCount} resposta(s) no tópico →</button>}{!message.deletedAt&&<div className="message-reactions">{(reactionIndex.get(message.id)??[]).map(r=><button key={r.emoji} aria-pressed={r.mine} aria-label={r.emoji+' '+r.count+' reações'} disabled={!canReact} onClick={()=>void annotate({kind:'reaction',channelId:channel.id,id:message.id,emoji:r.emoji,enabled:!r.mine})}>{r.emoji} {r.count}</button>)}{pinIndex.has(message.id)&&<small>📌 Fixada</small>}</div>}
           <div className="message-actions" role="group" aria-label="Ações da mensagem">
-            <MessageAction label="Reagir" onClick={()=>setReactionFor(reactionFor===message.id?undefined:message.id)}><Smile size={17}/></MessageAction>
-            <MessageAction label="Responder" disabled={busy||!!pending} onClick={()=>{setReply(message);setEdit(undefined);composer.current?.focus();}}><Reply size={17}/></MessageAction>
+            <MessageAction disabled={!canReact} label="Reagir" onClick={()=>setReactionFor(reactionFor===message.id?undefined:message.id)}><Smile size={17}/></MessageAction>
+            <MessageAction label="Responder" disabled={busy||!!pending||!canSend} onClick={()=>{setReply(message);setEdit(undefined);composer.current?.focus();}}><Reply size={17}/></MessageAction>
             <MessageAction label="Abrir tópico" onClick={()=>setThread(message)}><MessageSquareMore size={17}/></MessageAction>
             {canModerate&&<MessageAction label={pinIndex.has(message.id)?'Desafixar':'Fixar'} onClick={()=>void annotate({kind:'pin',channelId:channel.id,id:message.id,enabled:!pinIndex.has(message.id)})}>{pinIndex.has(message.id)?<PinOff size={17}/>:<Pin size={17}/>}</MessageAction>}
-            {message.authorId===userId&&<MessageAction label="Editar" disabled={busy||!!pending} onClick={()=>{setEdit(message);setReply(undefined);changeDraft(message.body);composer.current?.focus();}}><Pencil size={17}/></MessageAction>}
+            {message.authorId===userId&&canSend&&<MessageAction label="Editar" disabled={busy||!!pending} onClick={()=>{setEdit(message);setReply(undefined);changeDraft(message.body);composer.current?.focus();}}><Pencil size={17}/></MessageAction>}
             {(message.authorId===userId||canModerate)&&<MessageAction label="Excluir" danger disabled={busy} onClick={()=>setRemoving(message.id)}><Trash2 size={17}/></MessageAction>}
           </div>
           {reactionFor===message.id&&<div className="emoji-picker" role="group" aria-label="Escolher reação">{reactionEmojis.map(emoji=><button key={emoji} onClick={()=>{setReactionFor(undefined);void annotate({kind:'reaction',channelId:channel.id,id:message.id,emoji,enabled:true});}}>{emoji}</button>)}</div>}
@@ -363,7 +354,7 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
     </div>
     {files.panel}{voice.panel}{error && <div className="chat-error" role="alert">{error} <button onClick={() => void history()}>Atualizar</button></div>}
     <div className="recent-messages">{(!atBottom||historical)&&<button onClick={()=>{if(historicalRef.current)latest();nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
-    <form className="message-composer" hidden={voice.active} onSubmit={submit} onKeyDown={event=>{if(event.key==='Escape'){setEmojis(false);setMentionOpen(false);composer.current?.focus();}}}>
+    <>{!canSend&&<div className="permission-readonly-composer" role="status"><Shield size={16}/>Você pode ler este canal. Seu cargo não permite enviar mensagens aqui.</div>}</><form className="message-composer" hidden={voice.active||!canSend} onSubmit={submit} onKeyDown={event=>{if(event.key==='Escape'){setEmojis(false);setMentionOpen(false);composer.current?.focus();}}}>
       {(reply || edit) && <div className="composer-context">{edit ? 'Editando mensagem' : `Respondendo a ${reply?.authorName}`}<button type="button" disabled={busy || !!pending} aria-label="Cancelar resposta ou edição" onClick={() => { setReply(undefined); setEdit(undefined); changeDraft(''); }}><X size={14} /></button></div>}
       <div className="composer-row">{files.button}<div className="composer-editor"><div className="composer-mention-mirror" aria-hidden="true" ref={element=>{if(element&&composer.current)element.scrollTop=composer.current.scrollTop;}}>{(()=>{let offset=0;const nodes:ReactNode[]=[];for(const span of mentionDisplay.spans){nodes.push(mentionDisplay.text.slice(offset,span.start),<mark key={span.sourceStart}>{mentionDisplay.text.slice(span.start,span.end)}</mark>);offset=span.end;}nodes.push(mentionDisplay.text.slice(offset),'\n');return nodes;})()}</div><textarea ref={composer} onScroll={event=>{const mirror=event.currentTarget.previousElementSibling;if(mirror)mirror.scrollTop=event.currentTarget.scrollTop;}} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={mentionDisplay.text} aria-autocomplete="list" aria-controls={mentionOpen?'mention-suggestions':undefined} aria-activedescendant={mentionOpen&&suggestions.length?'mention-option-'+Math.min(mentionChoice,suggestions.length-1):undefined} readOnly={busy || !!pending} onChange={event => {const selection=beforeEdit.current;const next=applyMentionEdit(draft,mentionDisplay,event.target.value,selection);beforeEdit.current=undefined;if(next.length<=4000){changeDraft(next);const display=formatMentions(next,presenceIndex).text;let caret=event.target.selectionStart;if(selection?.inputType.startsWith('delete')){let left=selection.start,right=selection.end;const removed=mentionDisplay.text.length-event.target.value.length;if(left===right){if(selection.inputType.endsWith('Backward'))left=Math.max(0,left-removed);else right+=removed;}for(const span of mentionDisplay.spans)if(left<span.end&&right>span.start)caret=Math.min(caret,span.start);}checkMention(display,caret);if(display!==event.target.value)requestAnimationFrame(()=>composer.current?.setSelectionRange(caret,caret));}}} onClick={event=>checkMention(mentionDisplay.text,event.currentTarget.selectionStart)} onKeyUp={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))checkMention(mentionDisplay.text,event.currentTarget.selectionStart);}} onKeyDown={event => {
         if(event.nativeEvent.isComposing)return;
@@ -374,6 +365,6 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
       {emojis&&<div className="emoji-picker" role="group" aria-label="Emojis" onKeyDown={e=>{if(e.key==='Escape'){setEmojis(false);composer.current?.focus();}}}>{['😀','😂','🥰','😎','🤔','😢','😮','👍','👎','👏','🙌','❤️','🔥','🎉','🎮','👀','✅','🚀'].map(emoji=><button key={emoji} type="button" aria-label={'Inserir '+emoji} onClick={()=>{const node=composer.current;const displayStart=node?.selectionStart??mentionDisplay.text.length,displayEnd=node?.selectionEnd??displayStart;const start=mentionOffset(mentionDisplay,displayStart),end=mentionOffset(mentionDisplay,displayEnd,true);if(draft.length-(end-start)+emoji.length>4000)return;changeDraft(draft.slice(0,start)+emoji+draft.slice(end));setEmojis(false);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(displayStart+emoji.length,displayStart+emoji.length);});}}>{emoji}</button>)}</div>}
       <div className="composer-hint"><span>{pending ? 'Envio pendente: tente novamente para confirmar sem duplicar.' : 'Enter envia · Shift + Enter quebra a linha'}</span><span>{draft.length}/4000</span></div>
     </form>
-    {thread&&<ThreadPanel visible={visible} targetId={inboxTarget?.threadRootId===thread.id?inboxTarget.id:undefined} key={thread.id} root={messages.find(m=>m.id===thread.id)??thread} presence={presence} userId={userId} canModerate={canModerate} close={()=>setThread(undefined)}/>}
+    {thread&&<ThreadPanel canReply={can(channel.permissions,permission.send|permission.threads,true)} visible={visible} targetId={inboxTarget?.threadRootId===thread.id?inboxTarget.id:undefined} key={thread.id} root={messages.find(m=>m.id===thread.id)??thread} presence={presence} userId={userId} canModerate={canModerate} close={()=>setThread(undefined)}/>}
   </section>;
 }

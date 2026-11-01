@@ -1,3 +1,4 @@
+using Discorda.Core.Workspaces;
 using Discorda.Api.Admin;
 using Discorda.Core.Channels;
 using Discorda.Infrastructure.Persistence;
@@ -15,23 +16,23 @@ public static class ChatFeatures
     public static void MapChatFeatures(this WebApplication app)
     {
         var api = app.MapGroup("/api/v1/chat").RequireAuthorization("Member");
-        api.MapGet("/reads", async (HttpContext ctx, DiscordaDbContext db, CancellationToken ct) =>
-            Results.Ok(await db.ChannelReads.Where(r => r.UserId == Permissions.User(ctx)).ToDictionaryAsync(r => r.ChannelId.ToString(), r => r.MessageId.ToString(), ct)));
+        api.AddEndpointFilter(ChannelPermissions.Guard);
+        api.MapGet("/reads", async (HttpContext ctx, DiscordaDbContext db, CancellationToken ct) => {var visible=(await ChannelPermissions.From(ctx).Load(ct)).Visible(Permissions.User(ctx));return Results.Ok(await db.ChannelReads.Where(r => r.UserId == Permissions.User(ctx) && visible.Contains(r.ChannelId)).ToDictionaryAsync(r => r.ChannelId.ToString(), r => r.MessageId.ToString(), ct));});
         api.MapPut("/channels/{channelId:guid}/read", async (Guid channelId, ReadChange input, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) => {
             var user = Permissions.User(ctx);
-            if (!await ChatEndpoints.Access(db, channelId, user, ct) || !await db.Messages.AnyAsync(m => m.Id == input.MessageId && m.ChannelId == channelId, ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, user, ct) || !await db.Messages.AnyAsync(m => m.Id == input.MessageId && m.ChannelId == channelId, ct)) return Results.NotFound();
             await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO discorda.channel_reads (\"UserId\",\"ChannelId\",\"MessageId\") VALUES ({user},{channelId},{input.MessageId}) ON CONFLICT (\"UserId\",\"ChannelId\") DO UPDATE SET \"MessageId\"=GREATEST(discorda.channel_reads.\"MessageId\", EXCLUDED.\"MessageId\")", ct);
             return Results.NoContent();
         });
         api.MapGet("/channels/{channelId:guid}/messages/{id:long}/context",async(Guid channelId,long id,HttpContext ctx,DiscordaDbContext db,CancellationToken ct)=>{
-            if(!await ChatEndpoints.Access(db,channelId,Permissions.User(ctx),ct)||!await db.Messages.AnyAsync(m=>m.Id==id&&m.ChannelId==channelId&&m.DeletedAt==null&&m.ThreadRootId==null,ct))return Results.NotFound();
+            if(!await ChatEndpoints.Access(ctx,db,channelId,Permissions.User(ctx),ct)||!await db.Messages.AnyAsync(m=>m.Id==id&&m.ChannelId==channelId&&m.DeletedAt==null&&m.ThreadRootId==null,ct))return Results.NotFound();
             var before=await db.Messages.Where(m=>m.ChannelId==channelId&&m.ThreadRootId==null&&m.Id<id).OrderByDescending(m=>m.Id).Select(m=>m.Id).Take(25).ToArrayAsync(ct);
             var after=await db.Messages.Where(m=>m.ChannelId==channelId&&m.ThreadRootId==null&&m.Id>id).OrderBy(m=>m.Id).Select(m=>m.Id).Take(25).ToArrayAsync(ct);
             var ids=before.Concat([id]).Concat(after).ToArray();
             return Results.Ok(new{items=(await ChatEndpoints.Views(db,m=>ids.Contains(m.Id)).ToListAsync(ct)).OrderBy(m=>long.Parse(m.Id)),hasMore=before.Length==25});
         });
         api.MapGet("/channels/{channelId:guid}/search", async (Guid channelId, string? q, long? before, Guid? author, string? after, string? until, string? fileType, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) => {
-            if (!await ChatEndpoints.Access(db, channelId, Permissions.User(ctx), ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, Permissions.User(ctx), ct)) return Results.NotFound();
             q=q?.Trim()??"";
             if(q.Length>120||q.Any(char.IsControl)||before is <=0||!(fileType is null or "" or "any" or "image" or "video" or "audio" or "document"))return Results.BadRequest();
             DateTimeOffset? from=null,to=null;
@@ -55,14 +56,14 @@ public static class ChatFeatures
             return Results.Ok(new {items=(await ChatEndpoints.Views(db,m=>page.Contains(m.Id)).ToArrayAsync(ct)).OrderByDescending(m=>long.Parse(m.Id)),hasMore=ids.Length>50});
         });
         api.MapGet("/channels/{channelId:guid}/pins", async (Guid channelId, long? before, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) => {
-            if (!await ChatEndpoints.Access(db, channelId, Permissions.User(ctx), ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, Permissions.User(ctx), ct)) return Results.NotFound();
             var ids = await db.MessagePins.Where(p => (!before.HasValue || p.MessageId < before) && db.Messages.Any(m => m.Id == p.MessageId && m.ChannelId == channelId && m.DeletedAt == null))
                 .OrderByDescending(p => p.MessageId).Select(p => p.MessageId).Take(51).ToArrayAsync(ct);
             var page = ids.Take(50).ToArray();
             return Results.Ok(new { items = (await ChatEndpoints.Views(db, m => page.Contains(m.Id)).ToArrayAsync(ct)).OrderByDescending(m => long.Parse(m.Id)), hasMore = ids.Length > 50 });
         });
         api.MapGet("/channels/{channelId:guid}/annotations", async (Guid channelId, string? ids, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) => {
-            if (!await ChatEndpoints.Access(db, channelId, Permissions.User(ctx), ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, Permissions.User(ctx), ct)) return Results.NotFound();
             var parts = ids?.Split(',') ?? [];
             if (parts.Length == 0 || parts.Length > 100 || parts.Any(s => !long.TryParse(s, out var id) || id < 1)) return Results.BadRequest();
             var selected = parts.Select(long.Parse).Distinct().ToArray(); var user = Permissions.User(ctx);
@@ -73,7 +74,7 @@ public static class ChatFeatures
         });
         api.MapPut("/channels/{channelId:guid}/messages/{id:long}/reaction", async (Guid channelId, long id, ReactionChange input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) => {
             var user = Permissions.User(ctx);
-            if (!await ChatEndpoints.Access(db, channelId, user, ct) || !await db.Messages.AnyAsync(m => m.Id == id && m.ChannelId == channelId && m.DeletedAt == null, ct)) return Results.NotFound();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, user, ct) || !await db.Messages.AnyAsync(m => m.Id == id && m.ChannelId == channelId && m.DeletedAt == null, ct)) return Results.NotFound();
             if (!Emojis.Contains(input.Emoji)) return Results.BadRequest();
             if (input.Enabled) await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO discorda.message_reactions (\"MessageId\",\"UserId\",\"Emoji\") VALUES ({id},{user},{input.Emoji}) ON CONFLICT DO NOTHING", ct);
             else await db.MessageReactions.Where(r => r.MessageId == id && r.UserId == user && r.Emoji == input.Emoji).ExecuteDeleteAsync(ct);
@@ -82,8 +83,8 @@ public static class ChatFeatures
         });
         api.MapPut("/channels/{channelId:guid}/messages/{id:long}/pin", async (Guid channelId, long id, PinChange input, HttpContext ctx, DiscordaDbContext db, LiveChat live, CancellationToken ct) => {
             await using var tx = await Permissions.BeginChange(db, ct);
-            if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 1) return Results.Forbid();
-            if (!await ChatEndpoints.Access(db, channelId, Permissions.User(ctx), ct) || !await db.Messages.AnyAsync(m => m.Id == id && m.ChannelId == channelId && m.DeletedAt == null, ct)) return Results.NotFound();
+            if (!await ChannelPermissions.From(ctx).Has(ctx,Permission.ManageMessages,channelId)) return Results.Forbid();
+            if (!await ChatEndpoints.Access(ctx,db, channelId, Permissions.User(ctx), ct) || !await db.Messages.AnyAsync(m => m.Id == id && m.ChannelId == channelId && m.DeletedAt == null, ct)) return Results.NotFound();
             if (input.Enabled) await db.Database.ExecuteSqlInterpolatedAsync($"INSERT INTO discorda.message_pins (\"MessageId\",\"UserId\",\"CreatedAt\") VALUES ({id},{Permissions.User(ctx)},{DateTimeOffset.UtcNow}) ON CONFLICT DO NOTHING", ct);
             else await db.MessagePins.Where(p => p.MessageId == id).ExecuteDeleteAsync(ct);
             Permissions.Audit(db, ctx, input.Enabled ? "message.pin" : "message.unpin", id.ToString()); await db.SaveChangesAsync(ct); await tx.CommitAsync(ct);
