@@ -1,3 +1,4 @@
+import {beforeUpdate} from '../../lib/update-checkpoint';
 import {useVisibleReceipt} from './visible-receipt';
 import {useVoiceComposer} from './VoiceComposer';
 import {CreateChannel} from './CreateChannel';
@@ -14,7 +15,7 @@ import {scopedKey} from '../../lib/server-scope';
 import {useChatAttention} from './attention';
 import {ManagementPanel} from './ManagementPanel';
 import {HistoryTools,chatRequest,reactionEmojis,type Annotations} from './ChatTools';
-import { useEffect, useRef, useState, useMemo, type ReactNode } from 'react';
+import { useEffect, useRef, useState, useMemo, useLayoutEffect, type ReactNode } from 'react';
 import { Avatar } from './Avatar';
 import { Voice } from './Voice';
 import { Hash, MessageCircle, Plus, Send, Reply, Pencil, Trash2, X, Smile, Users, Search, Bell, MessageSquareMore, Pin, PinOff } from 'lucide-react';
@@ -181,6 +182,7 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
 
   const [draft, setDraft] = useState(()=>{try{return drafts.get(channel.id)??localStorage.getItem(draftKey)??'';}catch{return drafts.get(channel.id)??'';}});
   const mentionDisplay=useMemo(()=>formatMentions(draft,presenceIndex),[draft,presenceIndex]);
+  useLayoutEffect(()=>{const node=composer.current;if(!node)return;node.style.height='38px';node.style.height=Math.min(146,Math.max(38,node.scrollHeight))+'px';},[mentionDisplay.text]);
   function checkMention(text:string,caret:number){setMention(findMention(text,caret));setEmojis(false);}
   function insertMention(person:PresenceMember){
     if(!mention||busy||pending)return;
@@ -209,6 +211,18 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
   const restoring=useRef(!!savedPosition.current),saveTimer=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   function savePosition(){if(restoring.current||!list.current)return;try{if(nearBottom.current){localStorage.removeItem(scrollKey);return;}const bounds=list.current.getBoundingClientRect();const first=Array.from(list.current.querySelectorAll<HTMLElement>('.chat-message')).find(el=>el.getBoundingClientRect().bottom>bounds.top);if(first)localStorage.setItem(scrollKey,JSON.stringify({id:first.id.replace('message-',''),offset:first.getBoundingClientRect().top-bounds.top}));}catch{}}
   useEffect(()=>()=>{clearTimeout(saveTimer.current);savePosition();},[]);
+  const resumeKey=scopedKey('update-cursor:'+workspaceId+':'+userId+':'+channel.id);
+  useEffect(()=>{try{const saved=JSON.parse(localStorage.getItem(resumeKey)??'null');localStorage.removeItem(resumeKey);if(saved&&Number.isInteger(saved.start)&&Number.isInteger(saved.end)&&saved.start>=0&&saved.end>=saved.start&&saved.end<=mentionDisplay.text.length){composer.current?.focus({preventScroll:true});composer.current?.setSelectionRange(saved.start,saved.end);}}catch{}},[]);
+  useEffect(()=>beforeUpdate(()=>{
+    if(voice.active)throw Error('Envie ou descarte o áudio em preparação antes de atualizar.');
+    if(files.busy||files.hasFile||busy||pending)throw Error('Conclua o envio pendente antes de atualizar.');
+    if(edit||reply)throw Error('Conclua ou cancele a edição ou resposta antes de atualizar.');
+    clearTimeout(saveTimer.current);savePosition();
+    if(draft)localStorage.setItem(draftKey,draft);else localStorage.removeItem(draftKey);
+    localStorage.setItem(scopedKey('channel:'+userId),channel.id);
+    const node=composer.current;
+    if(node)localStorage.setItem(resumeKey,JSON.stringify({start:node.selectionStart,end:node.selectionEnd}));
+  }),[draft,voice.active,files.busy,files.hasFile,busy,pending,edit,reply]);
 
   const nearBottom = useRef(true);
   const [atBottom,setAtBottom]=useState(true);
@@ -227,6 +241,17 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
   async function showContext(message:ChatMessage){const ticket=++contextEpoch.current;restoring.current=false;savedPosition.current=undefined;historicalRef.current=true;setHistorical(true);nearBottom.current=false;setMessages([message]);setHasMore(false);try{const page=await request<{items:ChatMessage[];hasMore:boolean}>({kind:'context',channelId:channel.id,id:message.id});if(!alive.current||ticket!==contextEpoch.current)return;setMessages(page.items);setHasMore(page.hasMore);requestAnimationFrame(()=>document.getElementById('message-'+message.id)?.scrollIntoView({block:'center'}));}catch(e){if(alive.current&&ticket===contextEpoch.current)setError(errorMessage(e));}}
   function latest(){contextEpoch.current++;restoring.current=false;savedPosition.current=undefined;try{localStorage.removeItem(scrollKey);}catch{}historicalRef.current=false;setHistorical(false);nearBottom.current=true;currentMessages.current=[];setMessages([]);initialLoaded.current=false;void synchronize();}
   useEffect(()=>{const ids=new Set(messages.map(m=>m.id));annotationCache.current=new Set([...annotationCache.current].filter(id=>ids.has(id)));setAnnotations(old=>({reactions:old.reactions.filter(r=>ids.has(r.id)),pins:old.pins.filter(id=>ids.has(id))}));},[messages]);
+  async function restoreReading(id:string) {
+    fetching.current=true;
+    let fallback=false;
+    try{
+      const page=await request<{items:ChatMessage[];hasMore:boolean}>({kind:'context',channelId:channel.id,id});
+      if(!alive.current)return;
+      if(!page.items.some(message=>message.id===id))throw Error('A mensagem já não está disponível.');
+      setMessages(page.items);setHasMore(page.hasMore);initialLoaded.current=true;
+    }catch{if(alive.current){restoring.current=false;savedPosition.current=undefined;historicalRef.current=false;setHistorical(false);nearBottom.current=true;fallback=true;}}
+    finally{fetching.current=false;if(alive.current){setLoading(false);if(fallback)void history();}}
+  }
   async function history(before?: string) {
     if (fetching.current) return; fetching.current = true;
     try {
@@ -279,7 +304,7 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
       if (event.kind === 'message' && event.data.channelId === channel.id) setMessages(current => receive(current, [event.data]));
       if (event.kind === 'connection' && event.data === 'connected') void synchronize();
     });
-    if(savedPosition.current){historicalRef.current=true;setHistorical(true);nearBottom.current=false;void history(String(BigInt(savedPosition.current.id)+1n));}else void history(); void window.discorda?.liveActivity(channel.id, false);
+    if(savedPosition.current){historicalRef.current=true;setHistorical(true);nearBottom.current=false;void restoreReading(savedPosition.current.id);}else void history(); void window.discorda?.liveActivity(channel.id, false);
     const timer = setInterval(() => { if (document.visibilityState === 'visible') void synchronize(); }, 60000);
     return () => { alive.current = false; off?.(); clearInterval(timer); void window.discorda?.liveActivity(channel.id, false); };
   }, []);
@@ -340,11 +365,11 @@ function Conversation({ channels,onNavigate,inboxTarget,membersOpen,toggleMember
     <div className="recent-messages">{(!atBottom||historical)&&<button onClick={()=>{if(historicalRef.current)latest();nearBottom.current=true;setAtBottom(true);list.current?.scrollTo({top:list.current.scrollHeight});}}>Voltar às mensagens recentes ↓</button>}</div><div className="typing-status" aria-live="polite">{presence.filter(member => member.id !== userId && member.typingChannelId === channel.id).map(member => member.name).join(', ')}{presence.some(member => member.id !== userId && member.typingChannelId === channel.id) ? ' digitando…' : '\u00a0'}</div>
     <form className="message-composer" hidden={voice.active} onSubmit={submit} onKeyDown={event=>{if(event.key==='Escape'){setEmojis(false);setMentionOpen(false);composer.current?.focus();}}}>
       {(reply || edit) && <div className="composer-context">{edit ? 'Editando mensagem' : `Respondendo a ${reply?.authorName}`}<button type="button" disabled={busy || !!pending} aria-label="Cancelar resposta ou edição" onClick={() => { setReply(undefined); setEdit(undefined); changeDraft(''); }}><X size={14} /></button></div>}
-      <div className="composer-row">{files.button}<textarea ref={composer} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={mentionDisplay.text} aria-autocomplete="list" aria-controls={mentionOpen?'mention-suggestions':undefined} aria-activedescendant={mentionOpen&&suggestions.length?'mention-option-'+Math.min(mentionChoice,suggestions.length-1):undefined} readOnly={busy || !!pending} onChange={event => {const next=applyMentionEdit(draft,mentionDisplay,event.target.value,beforeEdit.current);beforeEdit.current=undefined;if(next.length<=4000){changeDraft(next);checkMention(event.target.value,event.target.selectionStart);}}} onClick={event=>checkMention(mentionDisplay.text,event.currentTarget.selectionStart)} onKeyUp={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))checkMention(mentionDisplay.text,event.currentTarget.selectionStart);}} onKeyDown={event => {
+      <div className="composer-row">{files.button}<div className="composer-editor"><div className="composer-mention-mirror" aria-hidden="true" ref={element=>{if(element&&composer.current)element.scrollTop=composer.current.scrollTop;}}>{(()=>{let offset=0;const nodes:ReactNode[]=[];for(const span of mentionDisplay.spans){nodes.push(mentionDisplay.text.slice(offset,span.start),<mark key={span.sourceStart}>{mentionDisplay.text.slice(span.start,span.end)}</mark>);offset=span.end;}nodes.push(mentionDisplay.text.slice(offset),'\n');return nodes;})()}</div><textarea ref={composer} onScroll={event=>{const mirror=event.currentTarget.previousElementSibling;if(mirror)mirror.scrollTop=event.currentTarget.scrollTop;}} aria-label="Mensagem" placeholder={`Conversar em #${channel.name}`} maxLength={4000} value={mentionDisplay.text} aria-autocomplete="list" aria-controls={mentionOpen?'mention-suggestions':undefined} aria-activedescendant={mentionOpen&&suggestions.length?'mention-option-'+Math.min(mentionChoice,suggestions.length-1):undefined} readOnly={busy || !!pending} onChange={event => {const selection=beforeEdit.current;const next=applyMentionEdit(draft,mentionDisplay,event.target.value,selection);beforeEdit.current=undefined;if(next.length<=4000){changeDraft(next);const display=formatMentions(next,presenceIndex).text;let caret=event.target.selectionStart;if(selection?.inputType.startsWith('delete')){let left=selection.start,right=selection.end;const removed=mentionDisplay.text.length-event.target.value.length;if(left===right){if(selection.inputType.endsWith('Backward'))left=Math.max(0,left-removed);else right+=removed;}for(const span of mentionDisplay.spans)if(left<span.end&&right>span.start)caret=Math.min(caret,span.start);}checkMention(display,caret);if(display!==event.target.value)requestAnimationFrame(()=>composer.current?.setSelectionRange(caret,caret));}}} onClick={event=>checkMention(mentionDisplay.text,event.currentTarget.selectionStart)} onKeyUp={event=>{if(['ArrowLeft','ArrowRight','Home','End'].includes(event.key))checkMention(mentionDisplay.text,event.currentTarget.selectionStart);}} onKeyDown={event => {
         if(event.nativeEvent.isComposing)return;
         if(mentionOpen&&event.key==='Escape'){event.preventDefault();event.stopPropagation();setMention(undefined);return;}
         if(mentionOpen&&suggestions.length&&['ArrowDown','ArrowUp','Enter','Tab'].includes(event.key)&&!event.shiftKey){event.preventDefault();if(event.key==='ArrowDown'||event.key==='ArrowUp')setMentionChoice(current=>(current+(event.key==='ArrowDown'?1:-1)+suggestions.length)%suggestions.length);else insertMention(suggestions[Math.min(mentionChoice,suggestions.length-1)]);return;}
-        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /><button type="button" title="Mencionar pessoa" aria-label="Mencionar pessoa" aria-expanded={mentionOpen} disabled={busy||!!pending} onClick={()=>{const node=composer.current;const caret=node?.selectionStart??mentionDisplay.text.length;const next=mentionDisplay.text.slice(0,caret)+'@'+mentionDisplay.text.slice(caret);const body=applyMentionEdit(draft,mentionDisplay,next);if(body.length>4000)return;changeDraft(body);checkMention(next,caret+1);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(caret+1,caret+1);});}}>@</button><button type="button" title="Escolher emoji" aria-label="Escolher emoji" aria-expanded={emojis} disabled={busy || !!pending} onClick={()=>{setEmojis(!emojis);setMentionOpen(false);}}><Smile size={20}/></button>{voice.button}<button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>
+        if (event.key === 'Enter' && !event.shiftKey && !event.nativeEvent.isComposing) { event.preventDefault(); event.currentTarget.form?.requestSubmit(); } }} /></div><button type="button" title="Mencionar pessoa" aria-label="Mencionar pessoa" aria-expanded={mentionOpen} disabled={busy||!!pending} onClick={()=>{const node=composer.current;const caret=node?.selectionStart??mentionDisplay.text.length;const next=mentionDisplay.text.slice(0,caret)+'@'+mentionDisplay.text.slice(caret);const body=applyMentionEdit(draft,mentionDisplay,next);if(body.length>4000)return;changeDraft(body);checkMention(next,caret+1);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(caret+1,caret+1);});}}>@</button><button type="button" title="Escolher emoji" aria-label="Escolher emoji" aria-expanded={emojis} disabled={busy || !!pending} onClick={()=>{setEmojis(!emojis);setMentionOpen(false);}}><Smile size={20}/></button>{voice.button}<button aria-label={pending ? 'Tentar enviar novamente' : edit ? 'Salvar edição' : 'Enviar mensagem'} disabled={busy || !draft.trim()}><Send size={20} /></button></div>
       {mentionOpen&&<div className="mention-picker" id="mention-suggestions" role="listbox" aria-label="Mencionar membro"><small>Marcar pessoa · ↑↓ escolher · Enter confirmar</small>{!suggestions.length&&<p>Nenhuma pessoa encontrada.</p>}{suggestions.map((person,index)=><button id={'mention-option-'+index} role="option" aria-selected={index===Math.min(mentionChoice,suggestions.length-1)} type="button" key={person.id} disabled={busy||!!pending} onMouseDown={e=>e.preventDefault()} onClick={()=>insertMention(person)}><Avatar url={person.avatarUrl} name={person.name}/><span>{person.name}</span><small>{person.status==='offline'?'Offline':'Disponível'}</small></button>)}</div>}
       {emojis&&<div className="emoji-picker" role="group" aria-label="Emojis" onKeyDown={e=>{if(e.key==='Escape'){setEmojis(false);composer.current?.focus();}}}>{['😀','😂','🥰','😎','🤔','😢','😮','👍','👎','👏','🙌','❤️','🔥','🎉','🎮','👀','✅','🚀'].map(emoji=><button key={emoji} type="button" aria-label={'Inserir '+emoji} onClick={()=>{const node=composer.current;const displayStart=node?.selectionStart??mentionDisplay.text.length,displayEnd=node?.selectionEnd??displayStart;const start=mentionOffset(mentionDisplay,displayStart),end=mentionOffset(mentionDisplay,displayEnd,true);if(draft.length-(end-start)+emoji.length>4000)return;changeDraft(draft.slice(0,start)+emoji+draft.slice(end));setEmojis(false);requestAnimationFrame(()=>{node?.focus();node?.setSelectionRange(displayStart+emoji.length,displayStart+emoji.length);});}}>{emoji}</button>)}</div>}
       <div className="composer-hint"><span>{pending ? 'Envio pendente: tente novamente para confirmar sem duplicar.' : 'Enter envia · Shift + Enter quebra a linha'}</span><span>{draft.length}/4000</span></div>

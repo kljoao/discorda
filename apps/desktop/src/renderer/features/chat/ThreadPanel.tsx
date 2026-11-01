@@ -1,3 +1,4 @@
+import {beforeUpdate} from '../../lib/update-checkpoint';
 import {MessageAction} from '../../components/ui/message-actions';
 import {Reply,Pencil,Trash2} from 'lucide-react';
 import {useVisibleReceipt} from './visible-receipt';
@@ -17,6 +18,7 @@ export function ThreadPanel({root,close,presence,userId,canModerate,targetId,vis
  const [items,setItems]=useState<ChatMessage[]>([]),[draft,setDraft]=useState(drafts.get(key)?.body??''),[error,setError]=useState(''),[busy,setBusy]=useState(false),[more,setMore]=useState(false),[loading,setLoading]=useState(false);
  useVisibleReceipt(targetId,visible,items);
  const [reply,setReply]=useState<ChatMessage>(),[editing,setEditing]=useState<ChatMessage>(),[removing,setRemoving]=useState<string>();
+ useEffect(()=>beforeUpdate(()=>{if(draft.trim()||busy||pending.current)throw Error('Conclua a resposta no tópico antes de atualizar.');}),[draft,busy]);
  const input=useRef<HTMLTextAreaElement>(null),alive=useRef(true),fetching=useRef(false),historical=useRef(false),pending=useRef(drafts.get(key)?.clientId?drafts.get(key):undefined);
  const names=useMemo(()=>new Map(presence.map(p=>[p.id,p])),[presence]);
  function change(value:string){setDraft(value);drafts.set(key,{body:value});if(drafts.size>50)drafts.delete(drafts.keys().next().value!);}

@@ -68,7 +68,7 @@ test('built desktop loads with a sandboxed preload and functional health action'
     });
     await page.getByRole('button',{name:'Testar tela cheia nativa',exact:true}).click();
     await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen())).toBe(true);
-    expect(await page.evaluate(()=>document.fullscreenElement?.id)).toBe('native-fullscreen-probe');
+    await expect.poll(()=>page.evaluate(()=>document.fullscreenElement?.id)).toBe('native-fullscreen-probe');
     await page.evaluate(()=>document.exitFullscreen());
     await expect.poll(()=>app.evaluate(({BrowserWindow})=>BrowserWindow.getAllWindows()[0].isFullScreen())).toBe(false);
     await page.evaluate(()=>document.getElementById('native-fullscreen-probe')?.remove());

@@ -1,4 +1,4 @@
-export interface UpdateState {channel?:'stable'|'beta';startupNotice?:string;status:'idle'|'checking'|'current'|'downloading'|'ready'|'error';version?:string;progress?:number;message?:string}
+export interface UpdateState {channel?:'stable'|'beta';startupNotice?:string;status:'idle'|'checking'|'current'|'downloading'|'ready'|'installing'|'error';version?:string;progress?:number;message?:string}
 export interface AppInfo {
   version: string;
   platform: string;

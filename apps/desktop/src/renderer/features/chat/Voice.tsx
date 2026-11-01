@@ -77,6 +77,9 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   async function chooseDevice(kind:'audioinput'|'audiooutput',value:string){if(kind==='audioinput'){if(room)await room.switchActiveDevice(kind,value);preferredInput.current=value;configureMicrophone({...microphone,deviceId:value});}else{await active.current?.playback?.output(value);setOutputDevice(value);preferredOutput.current=value;try{localStorage.setItem('discorda:output',value);}catch{}}setDeviceMenu(undefined);}
   const [devices, setDevices] = useState<MediaDeviceInfo[]>([]);
   const [sources, setSources] = useState<CaptureSource[]>();
+  const [sourcesLoading,setSourcesLoading]=useState(false),[sourcesError,setSourcesError]=useState('');
+  const sourceRevision=useRef(0);
+  function closeSources(){sourceRevision.current++;setSources(undefined);setSourcesLoading(false);}
   const [excludeBrowsers,setExcludeBrowsers]=useState(false);
   const [quality, setQuality] = useState<keyof typeof screenProfiles|'auto'>('auto');
   const [intent,setIntent]=useState<ScreenIntent>('auto');
@@ -128,23 +131,20 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   }
   async function leave(preserveRecovery=false) {
     if(!preserveRecovery){recovery.current.cancel();recovering.current=false;if(mounted.current){try{localStorage.removeItem(callKey);}catch{}setResumeChannel(undefined);}}
-    generation.current++;
+    generation.current++;sourceRevision.current++;
     const current = active.current; active.current = undefined;
     if (mounted.current) { if(!preserveRecovery){watchingRef.current=new Set();setWatching(new Set());setReconnecting(false);previousParticipants.current=[];}setCinema(false);setRoom(undefined); setChannel(undefined);if(!preserveRecovery)setOpen(false);setSources(undefined);setShareMenu(false); if(!preserveRecovery)setDeaf(false); setStatus(''); setLevel({db:-90,open:false}); }
     current?.subscriptions?.stop();
     const wasConnected=current?.sounds?.stop();
     const goodbye=wasConnected&&mounted.current&&!preserveRecovery?notify(current?.playback,'leave'):undefined;
     current?.room.localParticipant.trackPublications.forEach(p=>p.track?.stop());
-    await stopApplication();
-    await goodbye;
-    await current?.playback?.close();
-    if (current) {
-      // Stop devices synchronously, even if signaling is unavailable.
-      current.room.localParticipant.trackPublications.forEach(p => p.track?.stop());
-      await current.room.disconnect(true);
-      if(current.audioContext && current.audioContext.state!=="closed")await current.audioContext.close();
-      if (current.grant) await window.discorda?.media({kind: 'leave', channelId: current.channel.id, leaseId: current.grant.leaseId});
-    }
+    // Release signaling, devices and application audio together. The farewell tone never delays leaving.
+    await Promise.allSettled([
+      stopApplication(), current?.room.disconnect(true),
+      current?.grant?window.discorda?.media({kind:'leave',channelId:current.channel.id,leaseId:current.grant.leaseId}):undefined,
+      current?.audioContext&&current.audioContext.state!=="closed"?current.audioContext.close():undefined,
+      Promise.resolve(goodbye).finally(()=>current?.playback?.close()),
+    ]);
   }
   useEffect(() => {
     mounted.current = true;
@@ -175,9 +175,11 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   async function join(next: Channel, retry=false) {
     if (active.current?.channel.id === next.id) { setOpen(true); return true; }
     setAudioSettings(false);
-    await leave(retry);
+    const cleanup=leave(retry);
     const epoch = generation.current;
-    setStatus('Entrando…');setChannel(next);if(!retry)setOpen(false);
+    setStatus('Entrando…');setChannel(next);if(!retry)setOpen(true);
+    await cleanup;
+    if(epoch!==generation.current||!mounted.current)return false;
     const nextRoom = new Room({ adaptiveStream: true, dynacast: true, audioCaptureDefaults: { echoCancellation: true, noiseSuppression: microphone.noiseSuppression!==false, autoGainControl: true, deviceId:microphone.deviceId || undefined }, videoCaptureDefaults: { resolution: {width: 1280, height: 720, frameRate: 30} } });
     const current = { room: nextRoom, channel: next, joined:false, playback:new VoicePlayback(), grant: undefined as MediaGrant | undefined, sounds:undefined as ReturnType<typeof bindCallSounds>|undefined, subscriptions:undefined as ReturnType<typeof bindStreamSubscriptions>|undefined };
     active.current = current;
@@ -297,10 +299,14 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   useEffect(()=>window.discorda?.onLiveEvent(e=>{if(e.kind==='moderation'&&e.data.userId===userId)void moderationHandler.current(e.data.channelId).catch(()=>setError('A chamada foi alterada. Entre novamente na sala indicada.'));}),[userId]);
   async function chooseScreen(replace=false){
     setShareMenu(false);
-    if(local?.isScreenShareEnabled&&!replace){await stopApplication();await local.setScreenShareEnabled(false);return;}
-    setSources(await window.discorda!.captureSources());setAudioError('');
-    try{const result=await window.discorda!.audioStatus();if(!result.supported){setAudioError('Captura automática indisponível neste Windows. Nesta versão, compartilhar som do PC requer Windows 11.');}}
-    catch{setAudioError('Componente de áudio indisponível. Reinstale a versão atual do Discorda e tente novamente.');}
+    if(local?.isScreenShareEnabled&&!replace){await perform(async()=>{await stopApplication();await local.setScreenShareEnabled(false);});return;}
+    const current=active.current;if(!current)return;
+    const ticket=++sourceRevision.current;setSources([]);setSourcesLoading(true);setSourcesError('');setAudioError('');
+    const valid=()=>mounted.current&&active.current===current&&sourceRevision.current===ticket;
+    void window.discorda!.audioStatus().then(result=>{if(valid()&&!result.supported)setAudioError('Captura automática indisponível neste Windows. Compartilhar som do PC requer Windows 11.');}).catch(()=>{if(valid())setAudioError('Componente de áudio indisponível. Reinstale a versão atual do Discorda e tente novamente.');});
+    try{const result=await window.discorda!.captureSources();if(valid())setSources(result);}
+    catch{if(valid())setSourcesError('Não foi possível listar as janelas. Tente novamente.');}
+    finally{if(valid())setSourcesLoading(false);}
   }
   return <section className="voice-sidebar" aria-label="Canais de voz">
     {!room&&resumeChannel&&channels.some(c=>c.id===resumeChannel)&&<div className="call-resume"><p>Sua última chamada pode ser retomada.</p><button disabled={busy} onClick={()=>void join(channels.find(c=>c.id===resumeChannel)!).catch(()=>setError("Não foi possível retomar a chamada."))}>Voltar à chamada</button><small>Microfone e câmera desligados.</small><button onClick={()=>{setResumeChannel(undefined);try{localStorage.removeItem(callKey);}catch{}}}>Dispensar</button></div>}
@@ -311,24 +317,24 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
     {room&&active.current?.playback&&participants.filter(p=>!p.isLocal).map(p=><RemoteAudio key={p.identity} participant={p as RemoteParticipant} playback={active.current!.playback!} deaf={deaf} volume={volumes[memberKey(p)]??defaultVolume} watchingScreen={watchingParticipant(p,watching)} revision={revision}/>)}
     {dockHost&&createPortal(<div className="voice-dock compact-dock">
       {channel&&<><div className="call-status"><span className="ping-indicator" tabIndex={0} title={ping===undefined?'Medindo latência da chamada…':'Ping da chamada: '+ping+' ms'} aria-label={ping===undefined?'Medindo ping':'Ping: '+ping+' ms'}><Signal size={20}/><span className="ping-tooltip">{ping===undefined?'Medindo…':ping+' ms'}</span></span><div><strong>{status==='Conectado'?'Voz conectada':status}</strong><small>{channel.name}</small></div><button title="Desconectar" aria-label="Sair da chamada" className="disconnect-button" onClick={()=>void leave()}><PhoneOff size={18}/></button></div>
-      <div className="broadcast-controls"><button disabled={!local||busy} aria-pressed={!!local?.isCameraEnabled} title={local?.isCameraEnabled?'Desligar câmera':'Ligar câmera'} aria-label={local?.isCameraEnabled?'Desligar câmera':'Ligar câmera'} onClick={()=>void perform(()=>local!.setCameraEnabled(!local!.isCameraEnabled))}>{local?.isCameraEnabled?<Video size={21}/>:<VideoOff size={21}/>}<span>Câmera</span></button><button ref={shareButton} onContextMenu={e=>{if(local?.isScreenShareEnabled){e.preventDefault();setShareMenu(true);}}} onKeyDown={e=>{if(local?.isScreenShareEnabled&&(e.key==='ContextMenu'||e.shiftKey&&e.key==='F10')){e.preventDefault();setShareMenu(true);}}} disabled={!local||busy} aria-pressed={!!local?.isScreenShareEnabled} title={local?.isScreenShareEnabled?'Encerrar transmissão':'Compartilhar tela'} aria-label={local?.isScreenShareEnabled?'Parar tela':'Compartilhar tela'} onClick={()=>void perform(()=>chooseScreen())}><MonitorUp size={21}/><span>{local?.isScreenShareEnabled?'Parar tela':'Tela'}</span></button>{local?.isScreenShareEnabled&&<button className="share-options-trigger" aria-label="Opções da transmissão" aria-expanded={shareMenu} onClick={()=>setShareMenu(!shareMenu)}><ChevronUp size={14}/></button>}</div></>}
-      {shareMenu&&local?.isScreenShareEnabled&&<div ref={shareMenuRef} className="share-options-menu" role="dialog" aria-label="Opções da transmissão"><strong>Transmissão ao vivo</strong><button disabled={busy} onClick={()=>{setShareMenu(false);void perform(()=>setSharedAudio(!sharingAudio));}}>{sharingAudio?'Desativar som do PC':'Ativar som do PC'}</button><button disabled={busy} onClick={()=>void perform(()=>chooseScreen(true))}>Trocar tela ou janela</button><small>Discord e Discorda ficam fora do áudio.</small><button onClick={()=>{setShareMenu(false);shareButton.current?.focus();}}>Fechar</button></div>}
+      <div className="broadcast-controls"><button disabled={!local||busy} aria-pressed={!!local?.isCameraEnabled} title={local?.isCameraEnabled?'Desligar câmera':'Ligar câmera'} aria-label={local?.isCameraEnabled?'Desligar câmera':'Ligar câmera'} onClick={()=>void perform(()=>local!.setCameraEnabled(!local!.isCameraEnabled))}>{local?.isCameraEnabled?<Video size={21}/>:<VideoOff size={21}/>}<span>Câmera</span></button><button ref={shareButton} onContextMenu={e=>{if(local?.isScreenShareEnabled){e.preventDefault();setShareMenu(true);}}} onKeyDown={e=>{if(local?.isScreenShareEnabled&&(e.key==='ContextMenu'||e.shiftKey&&e.key==='F10')){e.preventDefault();setShareMenu(true);}}} disabled={!local||busy} aria-pressed={!!local?.isScreenShareEnabled} title={local?.isScreenShareEnabled?'Encerrar transmissão':'Compartilhar tela'} aria-label={local?.isScreenShareEnabled?'Parar tela':'Compartilhar tela'} onClick={()=>void chooseScreen()}><MonitorUp size={21}/><span>{local?.isScreenShareEnabled?'Parar tela':'Tela'}</span></button>{local?.isScreenShareEnabled&&<button className="share-options-trigger" aria-label="Opções da transmissão" aria-expanded={shareMenu} onClick={()=>setShareMenu(!shareMenu)}><ChevronUp size={14}/></button>}</div></>}
+      {shareMenu&&local?.isScreenShareEnabled&&<div ref={shareMenuRef} className="share-options-menu" role="dialog" aria-label="Opções da transmissão"><strong>Transmissão ao vivo</strong><button disabled={busy} onClick={()=>{setShareMenu(false);void perform(()=>setSharedAudio(!sharingAudio));}}>{sharingAudio?'Desativar som do PC':'Ativar som do PC'}</button><button disabled={busy} onClick={()=>void chooseScreen(true)}>Trocar tela ou janela</button><small>Discord e Discorda ficam fora do áudio.</small><button onClick={()=>{setShareMenu(false);shareButton.current?.focus();}}>Fechar</button></div>}
       <UpdateNotice onOpen={()=>{setSettingsTab('updates');setAudioSettings(true);}}/>{error&&<div className="voice-recovery-notice"><p className="voice-error" role="alert">{error}</p><button onClick={()=>{setSettingsTab('diagnostics');setAudioSettings(true);}}>Resolver problema de chamada</button></div>}
       <div className="personal-controls"><div className="self-profile"><Avatar url={self?.avatarUrl} name={self?.name??'Você'}/><span><strong title={self?.name}>{self?.name??'Você'}</strong><small>{channel?'Em voz':'Disponível'}</small></span></div><div className="split-control"><button disabled={!local||busy||deaf||testing} className={local?.isMicrophoneEnabled?'':'is-off'} title={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} aria-label={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} onClick={()=>void perform(toggleMicrophone)}>{local?.isMicrophoneEnabled?<Mic size={18}/>:<MicOff size={18}/>}</button><button aria-label="Selecionar microfone" aria-expanded={deviceMenu==='audioinput'} onClick={()=>{setDeviceMenu(deviceMenu==='audioinput'?undefined:'audioinput');void refreshDevices().catch(()=>setError('Não foi possível listar microfones.'));}}>{deviceMenu==='audioinput'?<ChevronDown size={12}/>:<ChevronUp size={12}/>}</button></div><div className="split-control"><button disabled={!local||busy} title={deaf?'Voltar a ouvir':'Ensurdecer'} aria-label={deaf?'Voltar a ouvir':'Ensurdecer'} aria-pressed={deaf} onClick={()=>void perform(async()=>{if(!deaf)await local!.setMicrophoneEnabled(false);setDeaf(!deaf);})}>{deaf?<VolumeX size={18}/>:<Headphones size={18}/>}</button><button aria-label="Selecionar saída de áudio" aria-expanded={deviceMenu==='audiooutput'} onClick={()=>{setDeviceMenu(deviceMenu==='audiooutput'?undefined:'audiooutput');void refreshDevices().catch(()=>setError('Não foi possível listar saídas de áudio.'));}}>{deviceMenu==='audiooutput'?<ChevronDown size={12}/>:<ChevronUp size={12}/>}</button></div><button title="Configurações" aria-label="Ajustar microfone" onClick={()=>{setDeviceMenu(undefined);setSettingsTab('audio');setAudioSettings(true);void refreshDevices().catch(()=>{});}}><Settings size={18}/></button></div>
       {deviceMenu&&<div className="device-menu" onKeyDown={event=>{if(event.key==='Escape'){setDeviceMenu(undefined);}}} role="dialog" aria-label={deviceMenu==='audioinput'?'Dispositivo de entrada':'Dispositivo de saída'}><div><strong>{deviceMenu==='audioinput'?'Microfone':'Saída de áudio'}</strong><button aria-label="Fechar dispositivos" onClick={()=>setDeviceMenu(undefined)}><X size={15}/></button></div><select aria-label={deviceMenu==='audioinput'?'Escolher microfone':'Escolher saída'} value={deviceMenu==='audioinput'?microphone.deviceId:outputDevice} onChange={e=>void perform(()=>chooseDevice(deviceMenu,e.target.value))}><option value="">Padrão do Windows</option>{devices.filter(d=>d.kind===deviceMenu&&d.deviceId).map(d=><option key={d.deviceId} value={d.deviceId}>{d.label||'Dispositivo de áudio'}</option>)}</select></div>}
     </div>,dockHost)}
-    {mediaHost&&(room||reconnecting)&&createPortal(<VoiceStage name={channel?.name??'Chamada'} participants={participants} watching={watching}
-      busy={busy||reconnecting} reconnecting={reconnecting} deaf={deaf} testing={testing} expanded={cinema} volumes={volumes} memberKey={memberKey}
+    {mediaHost&&(room||reconnecting||channel)&&createPortal(<VoiceStage name={channel?.name??'Chamada'} participants={participants} watching={watching}
+      busy={busy||reconnecting||!room} reconnecting={reconnecting} connecting={!room&&!reconnecting} deaf={deaf} testing={testing} expanded={cinema} volumes={volumes} memberKey={memberKey}
       avatar={p=>presenceById.get(memberKey(p))?.avatarUrl??(p.isLocal?self?.avatarUrl:undefined)}
       onWatch={watchStream} onStopWatching={stopWatching} onVolume={(id,value)=>changeVolume(id,'screen',value)} onMute={muteScreen}
       onMemberVolume={(p,event)=>openVolume(memberKey(p),p.name||'Participante',event.clientX,event.clientY)}
       onMicrophone={()=>void perform(toggleMicrophone)} onCamera={()=>void perform(()=>local!.setCameraEnabled(!local!.isCameraEnabled))}
-      onShare={()=>void perform(()=>chooseScreen())} onLeave={()=>void leave()} onExpand={()=>setCinema(value=>!value)}/>,mediaHost)}
-    {sources&&createPortal(<CapturePicker sources={sources} busy={busy} replacing={!!local?.isScreenShareEnabled}
+      onShare={()=>void chooseScreen()} onLeave={()=>void leave()} onExpand={()=>setCinema(value=>!value)}/>,mediaHost)}
+    {sources&&createPortal(<CapturePicker sources={sources} loading={sourcesLoading} sourceError={sourcesError} onRetry={()=>void chooseScreen(true)} busy={busy} replacing={!!local?.isScreenShareEnabled}
       quality={quality} intent={intent} fps={fps} audioError={audioError} excludeBrowsers={excludeBrowsers}
       onExcludeBrowsers={setExcludeBrowsers} onQuality={setQuality} onFps={setFps}
       onIntent={next=>{setIntent(next);setFps(sharingPresets[next].fps);setQuality(sharingPresets[next].quality);}}
-      onClose={()=>{if(!busyRef.current)setSources(undefined);}} onShare={source=>void perform(()=>share(source))}/>,document.body)}
+      onClose={()=>{if(!busyRef.current)closeSources();}} onShare={source=>void perform(()=>share(source))}/>,document.body)}
     {audioSettings&&createPortal(<SettingsDialog account={account} initialTab={settingsTab} onClose={()=>setAudioSettings(false)} audio={<><AudioSetup output={outputDevice}/><MicrophoneControls output={outputDevice} settings={microphone} change={configureMicrophone} callActive={!!local?.isMicrophoneEnabled} level={level} onTesting={setTesting}/><ShortcutControls error={shortcutError} value={shortcuts} change={setShortcuts}/><div className="voice-settings"><h3>Sons da chamada</h3><label>Volume dos avisos <output>{soundVolume}%</output><input aria-label="Volume dos avisos" type="range" min="0" max="100" step="5" value={soundVolume} onChange={e=>{const value=Number(e.target.value);setSoundVolume(value);try{localStorage.setItem('discorda:call-sounds',String(value));}catch{}}}/></label><p>Entrada, saída, compartilhamento e visualização de telas. Use 0% para silenciar. Ensurdecer também silencia os avisos.</p></div></>} devices={<><DevicePermissions/><div className="voice-settings"><h3>Dispositivos</h3><button disabled={!room} onClick={()=>void active.current?.playback?.notify('join',50)}>Testar som nos fones</button>{(['audioinput','audiooutput','videoinput'] as const).map(kind=><label key={kind}>{kind==='audioinput'?'Microfone':kind==='audiooutput'?'Fones / saída de som':'Câmera'}<select aria-label={kind} value={kind==='audioinput'?microphone.deviceId:kind==='audiooutput'?outputDevice:undefined} disabled={busy||(kind==='videoinput'&&!room)} onChange={e=>{const value=e.target.value;void perform(async()=>{if(kind==='videoinput')await room!.switchActiveDevice(kind,value);else await chooseDevice(kind,value);});}}><option value="">Padrão do Windows</option>{devices.filter(d=>d.kind===kind).map((d,i)=><option key={d.deviceId||i} value={d.deviceId}>{d.label||'Dispositivo '+(i+1)}</option>)}</select></label>)}<p>Microfone e fones podem ser escolhidos antes da chamada. A câmera requer uma sala conectada.</p></div></>} diagnostics={<><CallCheck input={microphone.deviceId} output={outputDevice} callActive={!!room}/><Diagnostics voice={status} reconnect={()=>{if(active.current)void recoverCall();else recovery.current.retryNow();}}/></>} updates={<UpdateControls/>}/>,document.body)}
     {volumeMenu&&createPortal(<div ref={menuRef} className="member-volume-menu" role="dialog" aria-label={'Volume de '+volumeMenu.name} style={{left:volumeMenu.x,top:volumeMenu.y}}><div><strong>{volumeMenu.name}</strong><button aria-label="Fechar volume" onClick={()=>setVolumeMenu(undefined)}><X size={15}/></button></div>{(['voice','screen'] as const).map(kind=><label key={kind}>{kind==='voice'?'Voz':'Som compartilhado'}<output>{(volumes[volumeMenu.id]??defaultVolume)[kind]}%</output><input aria-label={kind==='voice'?'Volume da voz':'Volume do compartilhamento'} type="range" min="0" max="400" step="5" value={(volumes[volumeMenu.id]??defaultVolume)[kind]} onChange={e=>changeVolume(volumeMenu.id,kind,Number(e.target.value))}/></label>)}<small>Só altera o volume para você.</small><button onClick={()=>{changeVolume(volumeMenu.id,'voice',150);changeVolume(volumeMenu.id,'screen',100);}}>Restaurar padrão</button></div>,document.body)}
   </section>;

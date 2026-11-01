@@ -22,6 +22,12 @@ describe('mention editor',()=>{
   expect(applyMentionEdit(body,view,'@Ana',{start:0,end:5,inputType:'deleteContentBackward'})).toBe('<@'+other+'>');
   expect(applyMentionEdit(body,view,'@Ana',{start:4,end:9,inputType:'deleteContentBackward'})).toBe('<@'+id+'>');
  });
+ it('deletes the complete mention from either direction and preserves neighboring identities',()=>{
+  const body='Oi <@'+id+'> e <@'+other+'>!',view=formatMentions(body,names);
+  expect(applyMentionEdit(body,view,'Oi @João Silv e @Ana!',{start:14,end:14,inputType:'deleteContentBackward'})).toBe('Oi  e <@'+other+'>!');
+  expect(applyMentionEdit(body,view,'Oi João Silva e @Ana!',{start:3,end:3,inputType:'deleteContentForward'})).toBe('Oi  e <@'+other+'>!');
+  expect(applyMentionEdit(body,view,'Oi @Joãlva e @Ana!',{start:7,end:11,inputType:'deleteByCut'})).toBe('Oi  e <@'+other+'>!');
+ });
  it('opens suggestions only at a mention boundary, not inside an email',()=>{
   expect(findMention('Olá @an',7)).toEqual({start:4,end:7,query:'an'});
   expect(findMention('@',1)?.query).toBe('');

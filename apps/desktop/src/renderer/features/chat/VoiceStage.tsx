@@ -1,6 +1,6 @@
 import {useEffect,useRef,useState,type CSSProperties,type MouseEvent} from 'react';
 import {Track,type Participant,type RemoteTrackPublication,type TrackPublication} from 'livekit-client';
-import {Columns2,EyeOff,Focus,LayoutGrid,Maximize2,Mic,MicOff,Minimize2,Monitor,MonitorUp,PhoneOff,Pin,PinOff,Play,Users,Video,VideoOff} from 'lucide-react';
+import {ChevronDown,ChevronUp,Columns2,EyeOff,Focus,LayoutGrid,Maximize2,Mic,MicOff,Minimize2,Monitor,MonitorUp,PhoneOff,Pin,PinOff,Play,Users,Video,VideoOff} from 'lucide-react';
 import {Avatar} from './Avatar';
 import {StreamWindow} from './StreamWindow';
 import {StreamVolume} from './StreamVolume';
@@ -11,7 +11,7 @@ import './voice-stage.css';
 
 type Layout='focus'|'overview'|'mosaic';
 type Props={
-  name:string;reconnecting?:boolean;participants:Participant[];watching:ReadonlySet<string>;busy:boolean;deaf:boolean;testing:boolean;expanded:boolean;
+  name:string;connecting?:boolean;reconnecting?:boolean;participants:Participant[];watching:ReadonlySet<string>;busy:boolean;deaf:boolean;testing:boolean;expanded:boolean;
   volumes:Record<string,MemberVolume>;memberKey:(participant:Participant)=>string;avatar:(participant:Participant)=>string|null|undefined;
   onWatch:(key:string)=>void;onStopWatching:(keys:string[])=>void;onVolume:(id:string,value:number)=>void;onMute:(id:string)=>void;
   onMemberVolume:(participant:Participant,event:MouseEvent)=>void;
@@ -41,6 +41,7 @@ export function VoiceStage(props:Props) {
   const catalog=useRef(new Map<string,{participant:Participant;publication:TrackPublication;key:string}>());
   const roomRef=useRef<HTMLElement>(null),idle=useRef<ReturnType<typeof setTimeout>|undefined>(undefined);
   const [layout,setLayout]=useState<Layout>('focus'),[focus,setFocus]=useState<string[]>([]),[preview,setPreview]=useState<string[]>([]);
+  const [railHidden,setRailHidden]=useState(false);
   const [awake,setAwake]=useState(true),[fullscreen,setFullscreen]=useState(false),[fullscreenError,setFullscreenError]=useState('');
   const currentStreams=participants.flatMap(participant=>[...participant.videoTrackPublications.values()]
     .filter(publication=>publication.source===Track.Source.ScreenShare)
@@ -84,7 +85,7 @@ export function VoiceStage(props:Props) {
       {rail&&participant.isSpeaking&&<span className="room-speaking-dot" aria-label="Falando"/>}
     </div>;
   }
-  return <section ref={roomRef} className={'voice-room'+(props.expanded?' cinema-mode':'')+(awake?' controls-awake':'')} aria-label={'Chamada '+props.name} data-layout={mode} onPointerMove={wake} onPointerEnter={wake} onPointerLeave={()=>{clearTimeout(idle.current);setAwake(false);}}>
+  return <section ref={roomRef} className={'voice-room'+(props.expanded?' cinema-mode':'')+(awake?' controls-awake':'')+(railHidden?' rail-hidden':'')} aria-label={'Chamada '+props.name} data-layout={mode} onPointerMove={wake} onPointerEnter={wake} onPointerLeave={()=>{clearTimeout(idle.current);setAwake(false);}}>
     <header className="room-header room-hover-control"><div><Users size={16}/><strong>{props.name}</strong><span>{participants.length} participantes</span></div></header>
     {mode==='overview'&&<div className="room-layouts room-hover-control" role="group" aria-label="Organizar a sala">
       <button type="button" className="room-icon-button" disabled={!available.length} aria-label="Foco nas transmissões" title="Foco nas transmissões" aria-pressed={false} onClick={()=>{setLayout('focus');wake();}}><Focus size={18}/></button>
@@ -110,10 +111,10 @@ export function VoiceStage(props:Props) {
       })}
       {mode==='overview'&&participants.map(participant=>person(participant))}
     </div>
-    {mode!=='overview'&&<div className="room-filmstrip" style={{'--rail-count':streams.length+participants.length} as CSSProperties} aria-label="Transmissões e participantes">
+    {mode!=='overview'&&<div className="room-rail-shell"><button type="button" className="room-rail-toggle" aria-label={railHidden?'Mostrar participantes':'Ocultar participantes'} aria-expanded={!railHidden} aria-controls="room-participant-rail" title={railHidden?'Mostrar participantes':'Ocultar participantes'} onClick={()=>{setRailHidden(value=>!value);wake();}}>{railHidden?<ChevronUp size={16}/>:<ChevronDown size={16}/>}</button><div className="room-rail-collapse" inert={railHidden}><div id="room-participant-rail" className="room-filmstrip" style={{'--rail-count':streams.length+participants.length} as CSSProperties} aria-label="Transmissões e participantes">
       {streams.map(({participant,key})=><div key={key} className={'room-stream-shortcut'+(focused.includes(key)?' is-focused':'')}><Monitor size={21}/><span>{participant.isLocal?'Sua tela':participant.name}</span><small>{participant.isLocal?'AO VIVO':watching.has(key)?'ASSISTINDO':'AO VIVO'}</small><button type="button" aria-label={participant.isLocal||watching.has(key)?'Focar transmissão de '+(participant.name||'Participante'):'Assista a transmissão de '+(participant.name||'Participante')} onClick={()=>participant.isLocal||watching.has(key)?spotlight(key):start(key)}><span>{participant.isLocal||watching.has(key)?'Ver em foco':'Assista a transmissão'}</span></button>{(participant.isLocal||watching.has(key))&&!focused.includes(key)&&<button type="button" className="room-rail-pin" aria-label={'Adicionar ao foco: '+participant.name} title="Adicionar ao foco" onClick={()=>toggleFocus(key)}><Pin size={14}/></button>}</div>)}
       {participants.map(participant=>person(participant,true))}
-    </div>}
+    </div></div></div>}
     <footer className="room-toolbar room-hover-control"><div className="room-call-actions" role="group" aria-label="Controles da sala">
       <button type="button" className={'room-action'+(!local?.isMicrophoneEnabled?' is-off':'')} disabled={busy||props.deaf||props.testing} aria-label={local?.isMicrophoneEnabled?'Silenciar microfone da sala':'Ligar microfone da sala'} title={local?.isMicrophoneEnabled?'Silenciar microfone':'Ligar microfone'} aria-pressed={!!local?.isMicrophoneEnabled} onClick={props.onMicrophone}>{local?.isMicrophoneEnabled?<Mic size={21}/>:<MicOff size={21}/>}</button>
       <button type="button" className="room-action" disabled={busy} aria-label={local?.isCameraEnabled?'Desligar webcam':'Ligar webcam'} title={local?.isCameraEnabled?'Desligar webcam':'Ligar webcam'} aria-pressed={!!local?.isCameraEnabled} onClick={props.onCamera}>{local?.isCameraEnabled?<Video size={21}/>:<VideoOff size={21}/>}</button>
@@ -122,7 +123,8 @@ export function VoiceStage(props:Props) {
       {!!targets.length&&<button type="button" className="room-action room-stop-watching" aria-label="Parar de visualizar" title={targets.length>1?'Parar de visualizar estas transmissões':'Parar de visualizar'} onClick={()=>stop(targets)}><EyeOff size={21}/></button>}
       <button type="button" className="room-action room-disconnect" aria-label="Desconectar da sala" title="Sair da chamada" onClick={props.onLeave}><PhoneOff size={21}/></button>
     </div></footer>
-    {!streams.length&&<span className="room-empty-hint room-hover-control">A conversa é de vocês. Compartilhe uma tela para assistir juntos.</span>}
+    {props.connecting&&<div className="room-connecting" role="status"><span/>Entrando na chamada…</div>}
+    {!streams.length&&!props.connecting&&<span className="room-empty-hint room-hover-control">A conversa é de vocês. Compartilhe uma tela para assistir juntos.</span>}
     {fullscreenError&&<p className="room-fullscreen-error" role="alert">{fullscreenError}</p>}
   </section>;
 }

@@ -77,3 +77,4 @@
   .capture-footer>div { width:100%;justify-content:flex-end; }
 }
 @media(prefers-reduced-motion:reduce) { .capture-modal .capture-grid button { transition:none; } }
+.capture-loading{display:flex;align-items:center;justify-content:center;gap:12px;min-height:190px;color:#abb3cc;font-size:13px}

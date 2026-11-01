@@ -7,8 +7,8 @@ import type {CaptureSource} from '../../../shared/ipc/contracts';
 import './capture-picker.css';
 
 type Quality=keyof typeof screenProfiles|'auto';
-export function CapturePicker({sources,busy,replacing,quality,intent,fps,audioError,excludeBrowsers,onExcludeBrowsers,onQuality,onIntent,onFps,onClose,onShare}:{
-  sources:CaptureSource[]; busy:boolean; replacing:boolean; quality:Quality; intent:ScreenIntent; fps:30|60;
+export function CapturePicker({sources,loading=false,sourceError,onRetry,busy,replacing,quality,intent,fps,audioError,excludeBrowsers,onExcludeBrowsers,onQuality,onIntent,onFps,onClose,onShare}:{
+  sources:CaptureSource[]; loading?:boolean; sourceError?:string; onRetry?:()=>void; busy:boolean; replacing:boolean; quality:Quality; intent:ScreenIntent; fps:30|60;
   audioError:string; excludeBrowsers:boolean; onExcludeBrowsers:(value:boolean)=>void;
   onQuality:(value:Quality)=>void; onIntent:(value:ScreenIntent)=>void; onFps:(value:30|60)=>void;
   onClose:()=>void; onShare:(source:CaptureSource)=>void;
@@ -31,7 +31,9 @@ export function CapturePicker({sources,busy,replacing,quality,intent,fps,audioEr
         <div className="capture-source-panel" role="tabpanel" id={id+'-panel'} aria-labelledby={id+'-'+tab} tabIndex={0}>
           <p className="capture-source-hint">{tab==='window'?'Compartilhe apenas a janela de um aplicativo.':'Tudo o que estiver no monitor selecionado ficará visível.'}</p>
           <div className="capture-grid">{visible.map(source=><button type="button" disabled={busy} key={source.id} aria-pressed={selected?.id===source.id} onClick={()=>setSelected(source)}><div className="capture-preview"><img src={source.thumbnail} alt=""/><span className="capture-selection" aria-hidden="true"/></div><span className="capture-source-name" title={source.name}>{tab==='window'?<AppWindow size={16}/>:<Monitor size={16}/>}<span>{source.name}</span></span></button>)}</div>
-          {!visible.length&&<div className="capture-empty">{tab==='window'?<AppWindow size={30}/>:<Monitor size={30}/>}<strong>{tab==='window'?'Nenhum aplicativo disponível':'Nenhum monitor disponível'}</strong><p>{tab==='window'?'Abra a janela que deseja compartilhar e reabra este menu, ou escolha Tela Inteira.':'Verifique seus monitores e reabra este menu.'}</p></div>}
+          {loading&&<div className="capture-loading" role="status"><span/>Buscando aplicativos e monitores…</div>}
+          {sourceError&&<div className="capture-empty" role="alert"><strong>{sourceError}</strong><button type="button" onClick={onRetry}>Tentar novamente</button></div>}
+          {!loading&&!sourceError&&!visible.length&&<div className="capture-empty">{tab==='window'?<AppWindow size={30}/>:<Monitor size={30}/>}<strong>{tab==='window'?'Nenhum aplicativo disponível':'Nenhum monitor disponível'}</strong><p>{tab==='window'?'Abra a janela que deseja compartilhar e reabra este menu, ou escolha Tela Inteira.':'Verifique seus monitores e reabra este menu.'}</p></div>}
         </div>
         <section className="capture-quality" aria-label="Qualidade da transmissão"><div className="capture-section-heading"><SlidersHorizontal size={16}/><h3>Qualidade da transmissão</h3>{replacing&&<small>Mantida durante a troca</small>}</div>
           <fieldset className="capture-options" disabled={busy||replacing} aria-label="Configurações de qualidade">

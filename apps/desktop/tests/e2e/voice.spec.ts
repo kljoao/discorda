@@ -32,6 +32,15 @@ test('voice channel opens avatars and screen replacement preserves publication a
   expect((await reception()).subscriptions.find((p:any)=>p.name==='Ana').tracks.every((t:any)=>t.desired)).toBe(true);
   expect((await reception()).subscriptions.find((p:any)=>p.name==='Bruno').tracks.every((t:any)=>!t.desired)).toBe(true);
   await expect(room.locator('.room-filmstrip .room-person')).toHaveCount(5);
+  const beforeHide=await room.locator('.room-canvas').evaluate(el=>el.getBoundingClientRect().height);
+  await room.getByRole('button',{name:'Ocultar participantes',exact:true}).click();
+  await expect(room.locator('.room-rail-collapse')).toHaveCSS('max-height','0px');
+  expect(await room.locator('.room-canvas').evaluate(el=>el.getBoundingClientRect().height)).toBeGreaterThan(beforeHide+70);
+  await expect(room.locator('.room-rail-collapse')).toHaveAttribute('inert','');
+  await expect(room.locator('video')).toHaveCount(1);await expect(page.locator('audio')).toHaveCount(1);
+  await page.screenshot({path:'test-results/voice-participants-hidden.png',fullPage:true});
+  await room.getByRole('button',{name:'Mostrar participantes',exact:true}).click();
+  await expect(room.locator('.room-rail-collapse')).toHaveCSS('max-height','100px');
   await expect(room.locator('.stream-zoom-controls')).toHaveCount(0);
   await room.getByRole('button',{name:'Ver visão global da sala',exact:true}).click();
   await expect(room).toHaveAttribute('data-layout','overview');
@@ -84,8 +93,13 @@ test('voice channel opens avatars and screen replacement preserves publication a
   await expect(page.getByText('Chat de texto',{exact:true})).toBeVisible();
   await expect(page.getByRole('button',{name:'Sair da chamada'})).toBeVisible();
   await voice.click();await expect(page.getByRole('region',{name:'Chamada Conversa'})).toBeVisible();
+  await page.evaluate(()=>{const api=window.discorda!,original=api.captureSources;(window as any).originalCapture=original;api.captureSources=()=>new Promise(resolve=>{(window as any).resolveCapture=async()=>resolve(await original());});});
   await page.getByRole('button',{name:'Compartilhar tela',exact:true}).click();
   const picker=page.getByRole('dialog',{name:'Compartilhar tela'});
+  await expect(picker).toBeVisible();await expect(picker.getByRole('status').filter({hasText:'Buscando aplicativos'})).toBeVisible();
+  await expect(picker.getByRole('button',{name:'Compartilhar',exact:true})).toBeDisabled();
+  await page.evaluate(()=>(window as any).resolveCapture());
+  await page.evaluate(()=>{window.discorda!.captureSources=(window as any).originalCapture;});
   await expect(page.getByRole('tab',{name:/Aplicativos/})).toHaveAttribute('aria-selected','true');
   await expect(picker.locator('.capture-grid button')).toHaveCount(3);
   await expect(picker.getByRole('checkbox',{name:/Compartilhar som/})).toHaveCount(0);
@@ -242,5 +256,30 @@ test('late join waits for consent, supports cameras, multiple focus, hover contr
   await expect(room.locator('.room-person video')).toHaveCount(1);
   await expect(page.locator('audio')).toHaveCount(0);
   expect(errors).toEqual([]);
+ }finally{await browser.close();await server.close();}
+});
+
+test('join gives immediate feedback and cancellation ignores late network and capture results',async()=>{
+ const server=await createServer({cacheDir:'node_modules/.vite-e2e-voice',optimizeDeps:{entries:['tests/e2e/voice.fixture.html']},resolve:{alias:[{find:/^livekit-client$/,replacement:path.resolve('tests/e2e/livekit.fixture.ts')}]},server:{port:5187,strictPort:true}});await server.listen();
+ const browser=await chromium.launch({channel:'msedge',headless:true});
+ try{
+  const page=await browser.newPage({viewport:{width:1240,height:820}});await page.goto('http://127.0.0.1:5187/tests/e2e/voice.fixture.html');
+  await page.evaluate(()=>{const api=window.discorda!,original=api.media;(window as any).originalMedia=original;api.media=action=>action.kind==='join'?new Promise(resolve=>{(window as any).finishJoin=async()=>resolve(await original(action));}):original(action);});
+  await page.getByRole('button',{name:/Conversa/}).click();
+  await expect(page.getByRole('status').filter({hasText:'Entrando na chamada…'})).toBeVisible();
+  expect(await page.evaluate(()=>(window as any).voiceSnapshot().joins)).toBe(0);
+  await page.getByRole('button',{name:'Sair da chamada',exact:true}).click();
+  await expect(page.getByRole('region',{name:'Chamada Conversa'})).toHaveCount(0);
+  await page.evaluate(()=>(window as any).finishJoin());
+  await expect(page.getByRole('button',{name:/Conversa/})).toBeEnabled();
+  expect(await page.evaluate(()=>(window as any).voiceSnapshot().joins)).toBe(0);
+  await page.evaluate(()=>{window.discorda!.media=(window as any).originalMedia;});
+  await page.getByRole('button',{name:/Conversa/}).click();await expect(page.locator('.room-person')).toHaveCount(5);
+  await page.evaluate(()=>{const api=window.discorda!,original=api.captureSources;api.captureSources=()=>new Promise(resolve=>{(window as any).finishSources=async()=>resolve(await original());});});
+  await page.getByRole('button',{name:'Compartilhar tela',exact:true}).click();
+  const picker=page.getByRole('dialog',{name:'Compartilhar tela'});await expect(picker.getByRole('status').filter({hasText:'Buscando aplicativos'})).toBeVisible();
+  await picker.getByRole('button',{name:'Cancelar',exact:true}).click();await expect(picker).toHaveCount(0);
+  await page.evaluate(()=>(window as any).finishSources());await expect(picker).toHaveCount(0);
+  await expect(page.getByRole('button',{name:'Ligar câmera',exact:true})).toBeEnabled();
  }finally{await browser.close();await server.close();}
 });

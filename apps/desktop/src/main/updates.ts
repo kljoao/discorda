@@ -9,9 +9,10 @@ import type { UpdateState } from '../shared/ipc/contracts';
 export class Updates {
   state:UpdateState={status:'idle'};
   private checking=false;
+  private installing=false;
   private channel:'stable'|'beta'='stable';
   private preferences=path.join(app.getPath('userData'),'update-channel.json');
-  setChannel(channel:'stable'|'beta'){if(this.checking||this.state.status==='downloading'||this.state.status==='ready')throw Error('Conclua a atualização ou reinicie o aplicativo antes de trocar de canal.');this.channel=channel;autoUpdater.allowPrerelease=channel==='beta';autoUpdater.channel=channel==='beta'?'beta':'latest';autoUpdater.allowDowngrade=false;writeFileSync(this.preferences,JSON.stringify({channel}),{mode:0o600});this.state={status:'idle'};}
+  setChannel(channel:'stable'|'beta'){if(this.installing||this.checking||this.state.status==='downloading'||this.state.status==='ready')throw Error('Conclua a atualização ou reinicie o aplicativo antes de trocar de canal.');this.channel=channel;autoUpdater.allowPrerelease=channel==='beta';autoUpdater.channel=channel==='beta'?'beta':'latest';autoUpdater.allowDowngrade=false;writeFileSync(this.preferences,JSON.stringify({channel}),{mode:0o600});this.state={status:'idle'};}
   private startupNotice?:string;
   private marker=path.join(app.getPath('userData'),'update-pending.json');
   confirmStartup(){
@@ -26,7 +27,7 @@ export class Updates {
     autoUpdater.autoDownload=false;autoUpdater.autoInstallOnAppQuit=false;autoUpdater.allowDowngrade=false;autoUpdater.allowPrerelease=false;autoUpdater.logger=null;
     try{if(JSON.parse(readFileSync(this.preferences,'utf8')).channel==='beta'){this.channel='beta';autoUpdater.allowPrerelease=true;autoUpdater.channel='beta';autoUpdater.allowDowngrade=false;}}catch{}
     if(autoUpdater instanceof NsisUpdater)autoUpdater.verifyUpdateCodeSignature=async(_publishers,file)=>{try{if(!this.release)throw new Error();await verifyInstaller(file,this.release);return null;}catch{return 'A assinatura privada da atualização não confere.';}};
-    autoUpdater.on('error',()=>{this.state={status:'error',message:'Atualização indisponível. Tente novamente mais tarde.'};});
+    autoUpdater.on('error',()=>{this.installing=false;this.state={status:'error',message:'Atualização indisponível. Tente novamente mais tarde.'};});
     autoUpdater.on('download-progress',p=>{this.state={status:'downloading',progress:Math.round(p.percent)};});
     autoUpdater.on('update-downloaded',event=>{void this.ready(event.downloadedFile);});
   }
@@ -34,7 +35,7 @@ export class Updates {
   async check(){
     if(process.env.DISCORDA_OFFICIAL_RELEASE !== '1'){this.state={status:'idle',message:'Build comunitária: atualize usando os instaladores do seu mantenedor.'};return;}
     if(!app.isPackaged){this.state={status:'idle',message:'Atualizações disponíveis no aplicativo instalado.'};return;}
-    if(this.checking||this.state.status==='downloading'||this.state.status==='ready')return;
+    if(this.installing||this.checking||this.state.status==='downloading'||this.state.status==='ready')return;
     this.checking=true;this.state={status:'checking'};
     try{
       const result=await autoUpdater.checkForUpdates();
@@ -50,13 +51,17 @@ export class Updates {
     finally{this.checking=false;}
   }
   async install(){
+    if(this.installing)return;
     if(this.callActive())throw new Error('Saia da chamada antes de atualizar.');
     if(this.state.status!=='ready'||!this.release||!this.downloaded)throw new Error('Nenhuma atualização pronta.');
+    this.installing=true;this.state={status:'installing',version:this.release.version};
+    try{
     const issue=compatibilityIssue(this.release,await this.serverProtocol());
     if(issue){this.state={...this.state,message:issue};throw new Error(issue);}
     await verifyInstaller(this.downloaded,this.release);
     if(this.callActive())throw new Error('Saia da chamada antes de atualizar.');
     writeFileSync(this.marker,JSON.stringify({target:this.release.version}),{mode:0o600});
-    autoUpdater.quitAndInstall(false,true);
+    autoUpdater.quitAndInstall(true,true);
+    }catch(error){this.installing=false;this.state={status:'ready',version:this.release.version,message:error instanceof Error?error.message:'Não foi possível aplicar a atualização.'};throw error;}
   }
 }

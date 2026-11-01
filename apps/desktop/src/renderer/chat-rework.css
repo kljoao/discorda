@@ -69,3 +69,15 @@
 .message-list .chat-message:hover .message-actions,.message-list .chat-message:focus-within .message-actions{transform:none}
 .message-action::after{bottom:auto;top:calc(100% + 10px);transform:translate(-50%,-4px)}
 .message-action:hover::after,.message-action:focus-visible::after{transform:translate(-50%,0)}
+/* The editor and its highlight mirror share metrics, including accessibility text sizing. */
+.composer-row{align-items:center;gap:6px;padding:9px 12px}
+.composer-editor{position:relative;flex:1;min-width:0}
+.composer-editor textarea,.composer-mention-mirror{box-sizing:border-box;width:100%;margin:0;padding:7px 2px;border:0;font-family:inherit;font-weight:400;letter-spacing:normal;font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere;tab-size:8}
+:root[data-font] .composer-mention-mirror{font-size:calc(14px * var(--reading-scale));line-height:1.65}
+.composer-row .composer-editor textarea{position:relative;display:block;resize:none;height:38px;min-height:38px;max-height:146px;background:transparent;overflow-y:auto;outline:none;box-shadow:none}
+.composer-mention-mirror{position:absolute;inset:0;height:100%;overflow:hidden;pointer-events:none;color:transparent;scrollbar-width:thin}
+.composer-mention-mirror mark{background:#929fff30;color:transparent;border-radius:4px;box-shadow:0 0 0 1px #a6b2ff18;box-decoration-break:clone;-webkit-box-decoration-break:clone}
+.composer-row>button{display:inline-flex;align-items:center;justify-content:center;flex:none;width:36px;height:36px;padding:8px;min-width:36px;min-height:36px}
+.composer-row>button svg{display:block;flex:none}
+.composer-hint{padding-top:2px}
+@media(max-width:600px){.composer-row{gap:1px;padding:7px}.composer-row>button{width:30px;min-width:30px;padding:6px}.composer-hint{font-size:9px}}

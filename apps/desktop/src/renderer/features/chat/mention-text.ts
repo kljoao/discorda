@@ -22,7 +22,7 @@ export function mentionOffset(value:MentionText,position:number,end=false){
   }
   return position+delta;
 }
-/** Linear diff; editing a name converts that mention to ordinary text. */
+/** Preserve identities across edits; deleting part of a mention removes the whole token. */
 export function applyMentionEdit(body:string,value:MentionText,next:string,selection?:{start:number;end:number;inputType:string}){
   let start=0;while(start<value.text.length&&start<next.length&&value.text[start]===next[start])start++;
   let suffix=0;while(suffix<value.text.length-start&&suffix<next.length-start&&value.text[value.text.length-1-suffix]===next[next.length-1-suffix])suffix++;
@@ -34,6 +34,11 @@ export function applyMentionEdit(body:string,value:MentionText,next:string,selec
     if(left===right&&removed>0){if(selection.inputType.endsWith('Backward'))left=Math.max(0,left-removed);else right=Math.min(value.text.length,right+removed);}
     const candidateEnd=next.length-(value.text.length-right);
     if(candidateEnd>=left&&next.slice(0,left)===value.text.slice(0,left)&&next.slice(candidateEnd)===value.text.slice(right)){start=left;end=right;newEnd=candidateEnd;}
+  }
+  if(selection?.inputType.startsWith('delete')) {
+    let left=start,right=end;
+    for(const span of value.spans)if(left<span.end&&right>span.start){left=Math.min(left,span.start);right=Math.max(right,span.end);}
+    return body.slice(0,mentionOffset(value,left))+body.slice(mentionOffset(value,right,true));
   }
   for(const span of value.spans){
     if(start>span.start&&start<span.end)start=span.start;

@@ -64,7 +64,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await page.getByRole('button',{name:/Versão 9.0.0 pronta para instalar/}).click();
     await expect(page.getByRole('dialog',{name:'Configurações',exact:true})).toBeVisible();
-    await expect(page.getByRole('button',{name:'Instalar e reiniciar'})).toBeVisible();
+    await expect(page.getByRole('button',{name:'Atualizar e reiniciar'})).toBeVisible();
     await expect(page.getByRole('dialog').getByText('Versão instalada: test',{exact:true}).first()).toBeVisible();
     await page.getByRole('tab',{name:'Voz e microfone',exact:true}).click();
     await expect(page.getByLabel('Volume de entrada',{exact:true})).toBeVisible();
@@ -262,6 +262,18 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('listbox',{name:'Mencionar membro'}).getByRole('option')).toHaveCount(2);
     await page.screenshot({path:'test-results/mention-autocomplete.png',fullPage:true});
     await page.keyboard.press('ArrowDown');await page.keyboard.press('Enter');
+    await expect(composer).toHaveValue('Olá @André ');
+    await expect(page.locator('.composer-mention-mirror mark')).toHaveText('@André');
+    await page.screenshot({path:'test-results/chat-mention-composer.png',fullPage:true});
+    const centers=await page.locator('.composer-row').evaluate(row=>{const editor=row.querySelector('textarea')!.getBoundingClientRect();return [...row.querySelectorAll(':scope > button')].map(button=>{const r=button.getBoundingClientRect();return Math.abs(r.y+r.height/2-editor.y-editor.height/2);});});
+    expect(centers.every(delta=>delta<=1)).toBe(true);
+    await composer.evaluate((el:HTMLTextAreaElement)=>el.setSelectionRange(10,10));await composer.press('Backspace');
+    await expect(composer).toHaveValue('Olá  ');await expect(page.locator('.composer-mention-mirror mark')).toHaveCount(0);
+    expect(await composer.evaluate((el:HTMLTextAreaElement)=>el.selectionStart)).toBe(4);
+    await composer.fill('Olá @an');await composer.press('ArrowDown');await composer.press('Enter');
+    await expect(composer).toHaveValue('Olá @André ');
+    await composer.evaluate((el:HTMLTextAreaElement)=>el.setSelectionRange(4,4));await composer.press('Delete');await expect(composer).toHaveValue('Olá  ');
+    await composer.fill('Olá @an');await composer.press('ArrowDown');await composer.press('Enter');
     await expect(composer).toHaveValue('Olá @André ');
     await expect(page.getByRole('listbox',{name:'Mencionar membro'})).toHaveCount(0);
     await page.keyboard.type('tudo bem?');await page.keyboard.press('Enter');

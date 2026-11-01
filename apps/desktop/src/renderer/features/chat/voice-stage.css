@@ -122,3 +122,14 @@
 @media(max-width:900px) { .voice-room[data-layout=overview] .room-toolbar { justify-content:flex-start;padding-left:12px; }.voice-room[data-layout=overview] .room-layouts { right:12px; } }
 @media(hover:none) { .voice-room .room-hover-control { opacity:1; }.voice-room .room-action { width:46px;height:44px; } }
 @media(prefers-reduced-motion:reduce) { .voice-room .room-hover-control { transition:none; } }
+.room-rail-shell{flex:none;min-height:0;display:flex;flex-direction:column;align-items:stretch;gap:3px}
+.voice-room .room-rail-toggle{align-self:center;display:grid;place-items:center;width:44px;height:22px;padding:0;border:1px solid #ffffff12;border-radius:7px;background:#191c27;color:#b5bdd4;transition:background 140ms,color 140ms}
+.voice-room .room-rail-toggle:hover{background:#a6b2ff20;color:#e5e9ff}
+.room-rail-collapse{overflow:hidden;max-height:100px;opacity:1;transition:max-height 220ms ease,opacity 160ms ease}
+.rail-hidden .room-rail-collapse{max-height:0;opacity:0;pointer-events:none}
+.room-connecting{position:absolute;inset:52px 20px 78px;display:flex;align-items:center;justify-content:center;gap:10px;color:#b5bdd4;font-size:13px}
+.room-connecting>span,.capture-loading>span{width:16px;height:16px;border:2px solid #a6b2ff30;border-top-color:#a6b2ff;border-radius:50%;animation:room-pending 800ms linear infinite}
+@keyframes room-pending{to{transform:rotate(360deg)}}
+@media(prefers-reduced-motion:reduce){.room-rail-collapse,.voice-room .room-rail-toggle{transition:none}.room-connecting>span,.capture-loading>span{animation:none}}
+/* Keep the reveal handle above the floating call controls at every rail height. */
+.room-rail-shell{margin-bottom:12px}

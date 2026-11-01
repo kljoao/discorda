@@ -23,6 +23,15 @@ win:
   artifactName: Discorda-${version}-setup.${ext}
 nsis:
   oneClick: false
+  perMachine: false
+  selectPerMachineByDefault: false
+  installerLanguages: [pt_BR]
+  language: 1046
+  include: resources/installer/theme.nsh
+  installerSidebar: resources/installer/sidebar.bmp
+  uninstallerSidebar: resources/installer/sidebar.bmp
+  installerIcon: resources/icon.ico
+  uninstallerIcon: resources/icon.ico
   allowToChangeInstallationDirectory: true
   createDesktopShortcut: true
   createStartMenuShortcut: true

@@ -2,10 +2,11 @@ import {ServerLibrary,serverId,inviteAddress,inviteLink} from './server-library'
 import {Shortcuts} from './shortcuts';
 import {adminAction} from './admin';
 import { diagnosticReport } from './diagnostics';
-import { app, clipboard, dialog, Notification, BrowserWindow, ipcMain, net, protocol, session, powerMonitor } from 'electron';
+import { app, clipboard, dialog, Notification, BrowserWindow, ipcMain, net, protocol, session, powerMonitor, screen } from 'electron';
 import path from 'node:path';
 import { readFile,writeFile,mkdir } from 'node:fs/promises';
 import {Updates} from './updates';
+import {readWindowState,saveWindowState} from './window-state';
 import {parseServerConfig} from './server-config';
 import {discoverServer,normalizeServerAddress} from './server-discovery';
 import {X509Certificate} from 'node:crypto';
@@ -215,8 +216,10 @@ else {
       });
     }
     function createWindow() {
+      const placementFile=path.join(app.getPath('userData'),'window-state.json');
+      const placement=readWindowState(placementFile,[screen.getPrimaryDisplay(),...screen.getAllDisplays()].map(display=>display.workArea));
       window = new BrowserWindow({
-        width: 1240, height: 820, minWidth: 840, minHeight: 620,
+        width: 1240, height: 820, ...placement?.bounds, minWidth: 840, minHeight: 620,
         icon:path.join(app.getAppPath(),'resources','icon.png'), backgroundColor: '#161619', title: 'Discorda', show: false,
         autoHideMenuBar: true,
         webPreferences: {
@@ -238,6 +241,8 @@ else {
         if (!isTrustedDocument(url, development)) event.preventDefault();
       });
       window.webContents.on('will-attach-webview', (event) => event.preventDefault());
+      if(placement?.maximized)window.maximize();
+      window.on('close',()=>{if(window&&!window.isDestroyed())saveWindowState(placementFile,window);});
       window.once('ready-to-show', () => window?.show());
       window.on('closed', () => { auth.cancel(); void media.stop(); void live.stop(); window = null; });
       void window.loadURL(development ? DEV_URL : APP_URL);
