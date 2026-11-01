@@ -8,7 +8,7 @@ namespace Discorda.Api.Chat;
 
 public sealed record SendMessage(Guid ClientId, string Body, long? ReplyToId, long? ThreadRootId = null);
 public sealed record EditMessage(string Body, long Version);
-public sealed record NewChannel(string Name);
+public sealed record NewChannel(string Name, string? Type = null);
 public sealed record EditProfile(string DisplayName);
 public sealed record MessageView(string Id, Guid ChannelId, Guid AuthorId, string AuthorName, Guid ClientId,
     string Body, string? ReplyToId, DateTimeOffset CreatedAt, DateTimeOffset? EditedAt, DateTimeOffset? DeletedAt, long Version, Guid? ReplyAuthorId, string? ThreadRootId, List<AttachmentView> Attachments, int ThreadReplyCount);
@@ -89,11 +89,12 @@ public static class ChatEndpoints
         {
             await using var tx = await Permissions.BeginChange(db, ct);
             if (Permissions.Rank(await Permissions.Role(ctx, app.Configuration, db, ct)) < 2) return Results.Forbid();
+            if (input.Type is not (null or "text" or "voice")) return Results.BadRequest();
             var name = input.Name?.Trim();
             if (string.IsNullOrWhiteSpace(name) || name.Length > 80 || name.Any(char.IsControl)) return Results.BadRequest();
             await db.Database.ExecuteSqlRawAsync("SELECT pg_advisory_xact_lock(74891321)", ct);
             if (await db.Channels.CountAsync(c => c.WorkspaceId == GroupId && c.ArchivedAt == null, ct) >= 100) return Results.BadRequest();
-            var channel = new Channel { WorkspaceId = GroupId, Name = name, Type = ChannelType.Text, SortOrder = 10 };
+            var channel = new Channel { WorkspaceId = GroupId, Name = name, Type = input.Type == "voice" ? ChannelType.Voice : ChannelType.Text, SortOrder = 10 };
             db.Channels.Add(channel); Permissions.Audit(db, ctx, "channel.create", channel.Id.ToString()); await db.SaveChangesAsync(ct);
             await tx.CommitAsync(ct);
             await live.Publish("channels", new { channel.Id });

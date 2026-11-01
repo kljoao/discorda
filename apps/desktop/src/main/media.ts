@@ -17,6 +17,10 @@ export class MediaController {
   readonly audio: ApplicationAudio;
   private deviceGrantUntil = 0;
   private testingUntil = 0;
+  private recordingUntil=0;
+  private recordingRevision=0;
+  private recordingTimer?:ReturnType<typeof setTimeout>;
+  private updateThrottling(){this.window()?.webContents.setBackgroundThrottling(!this.active&&this.recordingUntil<=Date.now());}
   private testRevision = 0;
   private selected?: { id: string; audio: boolean; until: number };
   private sources = new Set<string>();
@@ -24,8 +28,8 @@ export class MediaController {
     this.audio = new ApplicationAudio(window,()=>!!this.active);
     const trusted = (contents: Electron.WebContents | null, url: string) => !!contents && contents.id === this.window()?.webContents.id && isTrustedDocument(url, this.development);
     session.defaultSession.setPermissionRequestHandler((contents, permission, callback, details) => callback(
-      ((permission === 'media' && (!!this.active || this.deviceGrantUntil > Date.now() || (this.testingUntil > Date.now() && 'mediaTypes' in details && details.mediaTypes?.every(type => type === 'audio') === true))) || permission === 'fullscreen') && details.isMainFrame && trusted(contents, details.requestingUrl ?? '')));
-    session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => ((!!this.active || this.testingUntil > Date.now() || this.deviceGrantUntil > Date.now()) && permission === 'media' || permission === 'fullscreen') && trusted(contents, details.requestingUrl ?? ''));
+      ((permission === 'media' && (!!this.active || this.deviceGrantUntil > Date.now() || ((this.testingUntil > Date.now()||this.recordingUntil>Date.now()) && 'mediaTypes' in details && (details.mediaTypes?.length??0)>0&&details.mediaTypes?.every(type => type === 'audio') === true))) || permission === 'fullscreen') && details.isMainFrame && trusted(contents, details.requestingUrl ?? '')));
+    session.defaultSession.setPermissionCheckHandler((contents, permission, _origin, details) => ((!!this.active || this.testingUntil > Date.now() ||(this.recordingUntil>Date.now()&&details.mediaType==='audio')||this.deviceGrantUntil > Date.now()) && permission === 'media' || permission === 'fullscreen') && trusted(contents, details.requestingUrl ?? ''));
     session.defaultSession.setDisplayMediaRequestHandler(async (request, callback) => {
       const selection = this.selected; this.selected = undefined;
       if (!this.active || !selection || selection.until < Date.now() || request.frame !== this.window()?.webContents.mainFrame || !isTrustedDocument(request.frame.url, this.development)) { callback({}); return; }
@@ -51,7 +55,7 @@ export class MediaController {
       // Call/audio heartbeats must keep running while the sender is in a game or another app.
       this.window()?.webContents.setBackgroundThrottling(false);
     }
-    if (value.kind === 'leave' && this.active?.leaseId === value.leaseId) { this.active = undefined; this.selected = undefined; this.audio.stop();this.window()?.webContents.setBackgroundThrottling(true); }
+    if (value.kind === 'leave' && this.active?.leaseId === value.leaseId) { this.active = undefined; this.selected = undefined; this.audio.stop();this.updateThrottling(); }
     return result;
   }
   async testMicrophone(enabled: boolean) {
@@ -63,6 +67,14 @@ export class MediaController {
     if (state.status === "signed-in") this.testingUntil = Date.now() + 5 * 60_000;
     else throw new Error("Entre novamente para testar o microfone.");
   }
+  async recordVoice(enabled:boolean){
+    const revision=++this.recordingRevision;clearTimeout(this.recordingTimer);this.recordingUntil=0;this.updateThrottling();
+    if(!enabled)return;
+    const state=await this.auth.state();if(revision!==this.recordingRevision)return;
+    if(state.status!=='signed-in')throw Error('Entre na sua conta para gravar um áudio.');
+    this.recordingUntil=Date.now()+180000;this.updateThrottling();
+    this.recordingTimer=setTimeout(()=>{this.recordingUntil=0;this.updateThrottling();},180000);
+  }
   async devicePermissions(action:unknown) {
     if(action==='request'){const generation=this.generation;if((await this.auth.state()).status!=='signed-in'||generation!==this.generation)throw new Error('Entre na sua conta primeiro.');this.deviceGrantUntil=Date.now()+120000;return;}
     if(action==='microphone'||action==='camera'){await shell.openExternal(action==='microphone'?'ms-settings:privacy-microphone':'ms-settings:privacy-webcam');return;}
@@ -70,6 +82,7 @@ export class MediaController {
   }
   async stop() {
     this.audio.stop();this.deviceGrantUntil=0;
+    this.recordingRevision++;this.recordingUntil=0;clearTimeout(this.recordingTimer);
     this.window()?.webContents.setBackgroundThrottling(true);
     this.testRevision++;
     this.testingUntil = 0;

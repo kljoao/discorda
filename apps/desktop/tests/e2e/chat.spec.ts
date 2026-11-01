@@ -1,3 +1,4 @@
+import {installChatFixture} from './chat-fixture';
 import { chromium, expect, test } from '@playwright/test';
 import { createServer } from 'vite';
 
@@ -8,72 +9,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
   const browser = await chromium.launch({ channel: 'msedge', headless: true });
   try {
     const page = await browser.newPage({ viewport: { width: 1240, height: 820 } });
-    await page.addInitScript(() => {
-      // Test-only preload simulation. Production never loads this file or bypasses Auth.
-      let displayName='Pessoa de teste';let workspaceName='Grupo de teste';
-      const channels = [{id: '225a47d7-779e-4992-89d2-03b1517f9112', name: 'geral'}];
-      const messages: import('../../src/shared/ipc/contracts').ChatMessage[] = [];
-      window.addEventListener('test-seed',()=>{messages.length=0;for(let i=1;i<=1100;i++){const message={id:String(i),authorId:'other-user',authorName:'Histórico',channelId:channels[0].id,clientId:'seed-'+i,body:'Mensagem '+i,replyToId:null,createdAt:new Date().toISOString(),editedAt:null,deletedAt:null,version:1};messages.push(message);listeners.forEach(listener=>listener({kind:'message',data:message}));}});
-      let dropResponse = true;let following=false;let inboxRead=false;let staged: {name:string;size:number}|undefined;
-      let memberFailure = true;let inviteCreated=false;let inviteRevoked=false;
-      const reactions=new Map<string,{id:string;emoji:string;count:number;mine:boolean}>();const pins=new Set<string>();
-      const allowedUsers=[{email:'admin@example.test',enabled:true}];
-      const listeners = new Set<(event: import('../../src/shared/ipc/contracts').LiveEvent) => void>();
-      window.addEventListener('test-live', event => listeners.forEach(listener => listener((event as CustomEvent).detail)));
-      window.discorda = {onPowerState:()=>()=>{},
-        servers:async action=>({servers:[{id:'a'.repeat(64),name:'Grupo de teste',address:'https://grupo.example.test',current:true}],...(action.kind==='invite'?{invite:'discorda://join?server=https%3A%2F%2Fgrupo.example.test'}:{})}),onInvite:()=>()=>{},
-        shortcuts:async()=>{},onShortcut:()=>()=>{},
-        admin:async action=>{if(action.kind==='inviteCreate'){inviteCreated=true;return {ok:true,data:{link:'discorda://join?server=https%3A%2F%2Fgrupo.example.test&token='+'a'.repeat(64)}};}if(action.kind==='inviteRevoke'){inviteRevoked=true;return {ok:true,data:null};}if(action.kind==='invites')return {ok:true,data:inviteCreated?[{id:'invite-test',expiresAt:new Date(Date.now()+86400000).toISOString(),maxUses:5,uses:0,revoked:inviteRevoked}]:[]};if(action.kind==='joinRequests')return {ok:true,data:[]};if(action.kind==='storagePolicy')return {ok:true,data:{quotaMiB:512,retentionDays:0,version:1}};if(action.kind==='setup')return {ok:true,data:null};if(action.kind==='operations')return {ok:true,data:{checkedAt:new Date().toISOString(),api:'online',database:'ready',media:'online',activeCalls:0,process:{memoryBytes:1024,cpuAveragePercent:1,uptimeSeconds:60},storage:{databaseBytes:1024,freeBytes:2048,totalBytes:4096},backup:null}};if(action.kind==='settings')return {ok:true,data:{adminEmail:'admin@example.test'}};if(action.kind==='users')return {ok:true,data:allowedUsers};if(action.kind==='network')return {ok:true,data:[]};if(action.kind==='user'){allowedUsers.push({email:action.email,enabled:action.enabled});return {ok:true,data:null};}return {ok:true,data:null};},notifyMessage:async()=>{},
-        reconnectLive:async()=>{},diagnostics:async()=>({version:'test',platform:'win32',checkedAt:'',api:'online',database:'ready',chat:'connected',attempts:1,callActive:false,update:'idle'}),
-        updates:async()=>({status:'ready',version:'9.0.0'}),importServer:async()=>false,connectServer:async()=>({ok:false}),voiceActivity:async()=>{},audioStatus:async()=>({supported:true,os:"test"}), devicePermissions: async()=>{}, audioApplications:async()=>[], applicationAudio:async()=>{}, onApplicationAudio:()=>()=>{}, onApplicationAudioEnd:()=>()=>{},
-        microphoneTest: async () => {},
-        media: async () => ({ok: false, message: "Media unavailable"}), captureSources: async () => [], selectCapture: async () => {},
-      startLive: async () => { listeners.forEach(listener => listener({kind: 'connection', data: 'connected'})); }, stopLive: async () => {}, liveActivity: async () => {}, onLiveEvent: listener => { listeners.add(listener); return () => { listeners.delete(listener); }; },
-        getAppInfo: async () => ({version: 'test', platform: 'win32'}),
-        checkServices: async () => ({api: 'online', database: 'ready', checkedAt: ''}),
-        getAuthState: async () => ({status: 'signed-in', profile: {id: 'test-user', displayName, email: 'test@example.test'}}),
-        signIn: async () => ({status: 'signed-out'}), signOut: async () => ({status: 'signed-out'}), cancelSignIn: async () => {},
-        chat: async (action) => {
-          if(action.kind==='manageMembers')return {ok:true,data:[{id:'test-user',displayName:'Meu apelido',role:'Owner'},{id:'past-member',displayName:'Amigo offline',role:'Member'}]};if(action.kind==='audit')return {ok:true,data:[]};
-          if(action.kind==='threadFollow'){if(action.enabled!==undefined)following=action.enabled;return {ok:true,data:{enabled:following}};}
-          if(action.kind==='context')return {ok:true,data:{items:messages.filter(m=>m.channelId===action.channelId&&!m.threadRootId).slice(-50),hasMore:false}};
-          if(action.kind==='message')return {ok:true,data:messages.find(m=>m.id===action.id)};
-          if(action.kind==='inboxRead'){inboxRead=true;return {ok:true,data:null};}
-          if(action.kind==='inbox'){const message=messages.find(m=>m.threadRootId);return {ok:true,data:{items:message&&(!action.unread||!inboxRead)?[{...message,channelName:'geral',kind:'reply',read:inboxRead}]:[],hasMore:false}};}
-          if(action.kind==='attachmentStage'){staged={name:action.name,size:action.bytes.length};return {ok:true,data:{token:'file-token',...staged}};}
-          if(action.kind==='attachmentCancel'){staged=undefined;return {ok:true,data:null};}
-          if(action.kind==='attachmentProgress')return {ok:true,data:{progress:.5}};
-          if(action.kind==='attachmentTransfer'){const message={id:String(messages.length+1),authorId:'test-user',authorName:'Pessoa de teste',channelId:action.channelId,clientId:action.clientId,body:staged!.name,attachments:[{id:'file-id',name:staged!.name,size:staged!.size}],replyToId:null,createdAt:new Date().toISOString(),editedAt:null,deletedAt:null,version:1};messages.push(message);staged=undefined;return {ok:true,data:message};}
-          if(action.kind==='catchUp')return {ok:true,data:{since:new Date().toISOString(),channels:[],pins:[]}};
-          if(action.kind==='reads')return {ok:true,data:{}};
-          if(action.kind==='annotations')return {ok:true,data:{reactions:[...reactions.values()].filter(r=>action.ids.includes(r.id)),pins:[...pins].filter(id=>action.ids.includes(id))}};
-          if(action.kind==='reaction'){const key=action.id+action.emoji;if(action.enabled)reactions.set(key,{id:action.id,emoji:action.emoji,count:1,mine:true});else reactions.delete(key);return {ok:true,data:null};}
-          if(action.kind==='pin'){if(action.enabled)pins.add(action.id);else pins.delete(action.id);return {ok:true,data:null};}
-          if(action.kind==='search'||action.kind==='pins')return {ok:true,data:{items:messages.filter(m=>m.channelId===action.channelId&&!m.deletedAt&&(action.kind==='pins'?pins.has(m.id):m.body.includes(action.query)&&(!action.fileType||!!m.attachments?.length)&&(!action.author||m.authorId===action.author))),hasMore:false}};
-          if (action.kind === 'members' && memberFailure) {memberFailure=false;return {ok:false,message:'Temporariamente indisponível'};}
-          if (action.kind === 'members') return {ok:true,data:[{id:'past-member',name:'Amigo offline',status:'offline',typingChannelId:null,avatarUrl:null}]};
-          if(action.kind==='renameWorkspace'){workspaceName=action.name;return {ok:true,data:null};}
-          if (action.kind === 'workspace') return {ok: true, data: {id: 'test', name: workspaceName, role: 'Owner',isAdmin:true, userId: 'test-user', channels,voiceChannels:[{id:'bde069ed-d1c4-4930-92d3-9360eab43cb8',name:'Sala de voz'}]}};
-          if (action.kind === 'voiceRoster') return {ok:true,data:[{channelId:'bde069ed-d1c4-4930-92d3-9360eab43cb8',userId:'friend',name:'Amigo na voz'}]};
-          if (action.kind === 'profile') {displayName=action.displayName;return {ok:true,data:{id:'test-user',displayName,email:'test@example.test'}};}
-          if (action.kind === 'history') { const items = messages.filter(m => m.channelId === action.channelId && (m.threadRootId??undefined)===action.thread && (!action.before || BigInt(m.id) < BigInt(action.before))); return {ok: true, data: {items: items.slice(-50), hasMore: items.length > 50}}; }
-          if (action.kind === 'channel') { const channel = {id: crypto.randomUUID(), name: action.name}; channels.push(channel); return {ok: true, data: channel}; }
-          if (action.kind === 'send') {
-            let message = messages.find(m => m.clientId === action.clientId);
-            if (!message) { message = {id: String(messages.length + 1), authorId: 'test-user', authorName: 'Pessoa de teste', channelId: action.channelId, clientId: action.clientId, body: action.body, threadRootId:action.threadRootId, replyToId: action.replyToId ?? null, version: 1, createdAt: new Date().toISOString(), editedAt: null, deletedAt: null}; messages.push(message); }
-            if (dropResponse) { dropResponse = false; return {ok: false, message: 'Resposta perdida. Tente novamente.'}; }
-            return {ok: true, data: message};
-          }
-          if (action.kind === 'edit' || action.kind === 'delete') {
-            const message = messages.find(m => m.id === action.id)!;
-            message.version++; message.body = action.kind === 'edit' ? action.body : '';
-            if (action.kind === 'edit') message.editedAt = new Date().toISOString(); else message.deletedAt = new Date().toISOString();
-            return {ok: true, data: message};
-          }
-          return {ok: true, data: null};
-        }
-      };
-    });
+    page.setDefaultTimeout(12000);await page.addInitScript(installChatFixture);
     await page.goto('http://127.0.0.1:5183');
     await expect(page.getByRole('heading', {name: 'geral', exact: true})).toBeVisible({timeout:15000});
     await expect(page.getByRole('region',{name:'Canais de voz'}).getByText('Amigo na voz')).toBeVisible();
@@ -81,7 +17,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('button',{name:'Grupo de teste · Servidor atual',exact:true})).toHaveAttribute('aria-current','page');
     await page.getByRole('button',{name:'Adicionar servidor',exact:true}).click();
     await expect(page.getByLabel('Endereço ou convite do servidor')).toBeFocused();
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
     await page.getByRole('button',{name:'Alterar nome do servidor',exact:true}).click();
     await page.getByRole('dialog',{name:'Alterar nome do servidor'}).getByLabel('Nome',{exact:true}).fill('Nosso servidor');
@@ -141,7 +77,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.keyboard.press('End');
     await expect(page.getByRole('tab',{name:'Conexão e diagnóstico'})).toBeFocused();
     await page.screenshot({path:'test-results/diagnostics.png',fullPage:true,animations:'disabled'});
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await expect(page.getByRole('dialog')).toHaveCount(0);
     await expect(page.locator('.chat-account')).toHaveCount(0);
     await page.getByRole('button',{name:'Ajustar microfone',exact:true}).click();
@@ -150,7 +86,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('textbox',{name:'Nome no Discorda'}).fill('Meu apelido');
     await page.getByRole('button',{name:'Salvar nome'}).click();
     await expect(page.getByRole('heading',{name:'Meu apelido',exact:true})).toBeVisible();
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.getByRole('textbox', {name: 'Mensagem', exact: true}).fill('Olá, grupo 🙂');
     await page.getByRole('button', {name: 'Enviar mensagem', exact: true}).click();
     await expect(page.getByRole('alert')).toContainText('Resposta perdida');
@@ -176,12 +112,14 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('article').first().hover();
     await page.getByRole('article').first().getByRole('button', {name: 'Excluir', exact: true}).click();
     await page.locator('.delete-confirm').getByRole('button', {name: 'Excluir', exact: true}).click();
-    await expect(page.getByRole('article').first()).toContainText('Mensagem excluída');
+    await expect(page.getByRole('article')).toHaveCount(1);
+    await expect(page.getByText('Mensagem excluída',{exact:true})).toHaveCount(0);
     await page.screenshot({path: 'test-results/chat.png', fullPage: true, animations: 'disabled'});
-    await page.getByRole('button', {name: 'Criar canal'}).click();
+    await page.getByRole('button', {name: 'Criar canal de texto'}).click();
     await page.getByRole('textbox', {name: 'Nome do canal'}).fill('música');
-    await page.getByRole('button', {name: 'Criar', exact: true}).click();
+    await page.getByRole('button', {name: 'Criar canal', exact: true}).click();
     await expect(page.getByRole('heading', {name: 'música', exact: true})).toBeVisible();
+    await expect(page.getByRole('dialog',{name:'Criar canal de texto'})).toHaveCount(0);
     await page.evaluate(async () => {
       const result = await window.discorda!.chat({kind: 'workspace'});
       if (!result.ok) throw new Error('fixture failure');
@@ -219,7 +157,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByRole('button',{name:'Ativar avisos deste canal',exact:true})).toHaveAttribute('aria-pressed','true');
     await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
     await page.locator('.notification-preferences summary').click();await page.getByLabel('Notificações do Windows').check();
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.evaluate(async()=>{const r=await window.discorda!.chat({kind:'send',channelId:'225a47d7-779e-4992-89d2-03b1517f9112',clientId:crypto.randomUUID(),body:'Nova em outro canal'});if(!r.ok)throw Error('fixture');window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'message',data:r.data}}));});
     const general=page.getByRole('navigation',{name:'Canais',exact:true}).getByRole('button',{name:/geral/});
     await expect(general.getByLabel('Mensagens não lidas')).toBeVisible();
@@ -257,7 +195,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('region',{name:'Confirmar ação na chamada'}).getByRole('button',{name:'Cancelar',exact:true}).click();
     await expect(page.getByLabel('Mover ou remover Amigo offline')).toBeFocused();
 
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.setViewportSize({width:900,height:650});
     expect(await page.evaluate(()=>document.documentElement.scrollWidth<=window.innerWidth)).toBe(true);
     await page.screenshot({path:'test-results/chat-compact.png',fullPage:true,animations:'disabled'});
@@ -266,7 +204,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('button',{name:'Copiar endereço de conexão'}).click();
     await expect(page.getByLabel('Endereço copiado')).toHaveValue(/discorda:\/\/join/);
     await page.screenshot({path:'test-results/community-servers.png',fullPage:true});
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.getByRole('button',{name:'Opções do servidor',exact:true}).click();
     await page.getByRole('button',{name:'Administrar servidor',exact:true}).click();
     await page.getByText('O que cada cargo pode fazer?',{exact:true}).click();
@@ -285,7 +223,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await page.getByRole('button',{name:'Acessos e rede do servidor',exact:true}).click();
     await expect(page.getByText('Memória da API',{exact:true})).toBeVisible();
     await page.getByRole('dialog',{name:'Administrar servidor',exact:true}).getByRole('button',{name:'Fechar',exact:true}).click();
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.emulateMedia({reducedMotion:'reduce'});
     await page.getByRole('button',{name:'Ajustar microfone',exact:true}).click();
     await expect(page.getByRole('dialog',{name:'Configurações',exact:true})).toBeVisible();
@@ -312,7 +250,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
       await expect(page.getByRole('dialog',{name:'Configurações',exact:true}).getByRole('alert')).toContainText(message);
       await expect(page.getByRole('button',{name:'Testar microfone',exact:true})).toBeEnabled();
     }
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await expect(page.getByRole('button',{name:'Ajustar microfone',exact:true})).toBeFocused();
     await page.evaluate(()=>{const original=AudioContext.prototype.createOscillator;(window as any).mentionTones=0;AudioContext.prototype.createOscillator=function(){(window as any).mentionTones++;return original.call(this);};});
     await page.evaluate(()=>window.dispatchEvent(new CustomEvent('test-live',{detail:{kind:'message',data:{id:'900001',version:1,channelId:'225a47d7-779e-4992-89d2-03b1517f9112',authorId:'other-user',authorName:'Outra pessoa',body:'Resposta para você',replyAuthorId:'test-user',replyToId:'1',clientId:'test-reply',createdAt:new Date().toISOString(),editedAt:null,deletedAt:null}}})));
@@ -344,22 +282,9 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(thread.getByRole('textbox',{name:'Resposta no tópico'})).toBeFocused();
     await page.screenshot({path:'test-results/thread-panel.png',fullPage:true});
     await thread.getByRole('button',{name:'Fechar tópico'}).click();
-    await page.getByRole('button',{name:'Desde sua última visita',exact:true}).click();
-    const overview=page.getByRole('dialog',{name:'Desde sua última visita'});
-    await expect(overview.getByText('Resposta organizada',{exact:true})).toBeVisible();
-    await page.screenshot({path:'test-results/catch-up.png',fullPage:true});
-    await overview.getByRole('button',{name:'Fechar novidades'}).click();
-    await page.getByRole('button',{name:'Caixa de entrada',exact:true}).click();
-    const inbox=page.getByRole('dialog',{name:'Caixa de entrada'});
-    await expect(inbox.getByText('Resposta organizada',{exact:true})).toBeVisible();
-    await page.screenshot({path:'test-results/inbox.png',fullPage:true});
-    await inbox.getByRole('button',{name:'Abrir mensagem'}).click();
-    await expect(thread.getByText('Resposta organizada',{exact:true})).toBeVisible();
-    await page.waitForTimeout(900); // Reading requires a visible, focused message.
-    await thread.getByRole('button',{name:'Fechar tópico'}).click();
-    await page.getByRole('button',{name:'Caixa de entrada',exact:true}).click();
-    await expect(inbox.getByText('Tudo em dia por aqui.')).toBeVisible();
-    await page.keyboard.press('Escape');
+    await expect(page.getByRole('button',{name:'Desde sua última visita',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:'Caixa de entrada',exact:true})).toHaveCount(0);
+    await expect(page.getByRole('button',{name:/Criar sala temporária/})).toHaveCount(0);
     await page.locator('.conversation input[type=file]').setInputFiles({name:'review.txt',mimeType:'text/plain',buffer:Buffer.from('hello')});
     await expect(page.getByRole('complementary',{name:'Revisar arquivo antes de enviar'})).toBeVisible();
     await expect(page.locator('.message-list').getByText('review.txt',{exact:true})).toHaveCount(0);
@@ -387,7 +312,7 @@ test('chat preserves retry identity, edits, replies, deletion and channel creati
     await expect(page.getByText('Revise antes de compartilhar',{exact:true})).toBeVisible();
     await page.getByRole('button',{name:'Enviar resumo ao canal',exact:true}).click();
     await expect(page.getByText('Resumo enviado',{exact:true})).toBeVisible();
-    await page.keyboard.press('Escape');
+    await page.keyboard.press('Escape');await expect(page.locator('.is-closing')).toHaveCount(0);
     await page.evaluate(()=>window.dispatchEvent(new Event('test-seed')));
     await expect(page.locator('.chat-message')).toHaveCount(500);
     await page.getByRole('button',{name:'Carregar anteriores',exact:true}).click();

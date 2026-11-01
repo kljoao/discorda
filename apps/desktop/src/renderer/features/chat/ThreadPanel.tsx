@@ -1,3 +1,5 @@
+import {MessageAction} from '../../components/ui/message-actions';
+import {Reply,Pencil,Trash2} from 'lucide-react';
 import {useVisibleReceipt} from './visible-receipt';
 import {useEffect,useMemo,useRef,useState} from 'react';
 import type {ChatMessage,PresenceMember} from '../../../shared/ipc/contracts';
@@ -7,6 +9,7 @@ import {formatMentions} from './mention-text';
 import {scopedKey} from '../../lib/server-scope';
 const drafts=new Map<string,{body:string;clientId?:string;replyToId?:string}>();
 export function ThreadPanel({root,close,presence,userId,canModerate,targetId,visible=true}:{visible?:boolean;targetId?:string;root:ChatMessage;close:()=>void;presence:PresenceMember[];userId:string;canModerate:boolean}){
+ useEffect(()=>{if(root.deletedAt)close();},[root.deletedAt]);
  const [following,setFollowing]=useState(false),[followBusy,setFollowBusy]=useState(false);
  useEffect(()=>{let alive=true;void window.discorda?.chat({kind:'threadFollow',channelId:root.channelId,id:root.id}).then(r=>{if(alive&&r.ok)setFollowing((r.data as {enabled:boolean}).enabled);});return()=>{alive=false;};},[root.id]);
  async function follow(){setFollowBusy(true);try{const r=await window.discorda!.chat({kind:'threadFollow',channelId:root.channelId,id:root.id,enabled:!following});if(!r.ok)throw Error(r.message);setFollowing(!following);}catch{setError('Não foi possível alterar o acompanhamento.');}finally{setFollowBusy(false);}}
@@ -49,13 +52,13 @@ export function ThreadPanel({root,close,presence,userId,canModerate,targetId,vis
  return <aside className="thread-panel" aria-label="Tópico">
   <header><div><strong>Tópico</strong><small>Respostas separadas do canal</small></div><button aria-label="Fechar tópico" onClick={close}>×</button></header>
   <button disabled={followBusy} aria-pressed={following} onClick={()=>void follow()}>{following?"Seguindo tópico · deixar de seguir":"Seguir tópico"}</button>
-  <blockquote><strong>{root.authorName}</strong><p>{root.deletedAt?'Mensagem excluída':formatMentions(root.body,names).text}</p></blockquote>
+  {!root.deletedAt&&<blockquote><strong>{root.authorName}</strong><p>{formatMentions(root.body,names).text}</p><MessageFiles message={root} avatarUrl={names.get(root.authorId)?.avatarUrl}/></blockquote>}
   <div className="thread-messages" aria-live="polite">
    {more&&<button disabled={loading} onClick={()=>void load(items[0]?.id)}>Respostas anteriores</button>}
    {historical.current&&<button onClick={()=>void load(undefined,true)}>Voltar às respostas recentes</button>}
    {loading&&!items.length&&<p>Carregando tópico…</p>}{!loading&&!items.length&&<p>Aprofunde essa conversa aqui.</p>}
-   {items.map(m=><article data-inbox-id={m.id} key={m.id}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time><p>{m.deletedAt?'Mensagem excluída':formatMentions(m.body,names).text}</p><MessageFiles message={m}/>
-    {!m.deletedAt&&<div className="thread-actions"><button disabled={busy||!!pending.current} onClick={()=>{setReply(m);setEditing(undefined);input.current?.focus();}}>Responder</button>{m.authorId===userId&&<button disabled={busy||!!pending.current} onClick={()=>{setEditing(m);setReply(undefined);setDraft(m.body);input.current?.focus();}}>Editar</button>}{(m.authorId===userId||canModerate)&&<button disabled={busy} onClick={()=>setRemoving(m.id)}>Excluir</button>}</div>}
+   {items.filter(m=>!m.deletedAt).map(m=><article data-inbox-id={m.id} key={m.id}><strong>{m.authorName}</strong><time>{new Date(m.createdAt).toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time><p>{formatMentions(m.body,names).text}</p><MessageFiles message={m} avatarUrl={names.get(m.authorId)?.avatarUrl} onReply={()=>{setReply(m);setEditing(undefined);input.current?.focus();}} onDelete={m.authorId===userId||canModerate?()=>setRemoving(m.id):undefined}/>
+    {!m.deletedAt&&<div className="thread-actions"><MessageAction label="Responder" disabled={busy||!!pending.current} onClick={()=>{setReply(m);setEditing(undefined);input.current?.focus();}}><Reply size={16}/></MessageAction>{m.authorId===userId&&<MessageAction label="Editar" disabled={busy||!!pending.current} onClick={()=>{setEditing(m);setReply(undefined);setDraft(m.body);input.current?.focus();}}><Pencil size={16}/></MessageAction>}{(m.authorId===userId||canModerate)&&<MessageAction label="Excluir" danger disabled={busy} onClick={()=>setRemoving(m.id)}><Trash2 size={16}/></MessageAction>}</div>}
     {removing===m.id&&<div>Excluir resposta?<button disabled={busy} onClick={()=>void remove(m)}>Confirmar</button><button onClick={()=>setRemoving(undefined)}>Cancelar</button></div>}
    </article>)}
   </div>

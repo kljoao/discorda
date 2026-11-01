@@ -9,6 +9,14 @@ export class AuthController {
   private inviteToken?:string;
   setInvite(token:string){this.inviteToken=token;}
   private client?: SupabaseClient;
+  attachmentUrl(channelId:string,id:string){if(!this.apiOrigin)throw Error('Servidor indisponível.');return this.apiOrigin+'/api/v1/chat/channels/'+channelId+'/attachments/'+id+'?download=true';}
+  attachmentFromUrl(value:string){
+    if(!this.apiOrigin)return;
+    const url=new URL(value);if(url.origin!==new URL(this.apiOrigin).origin)return;
+    const guid='([0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12})';
+    const match=new RegExp('^/api/v1/chat/channels/'+guid+'/attachments/'+guid+'$','i').exec(url.pathname);
+    if(match&&url.searchParams.get('download')==='true')return {channelId:match[1],id:match[2]};
+  }
   private supabaseOrigin?: string;
   private creating?: Promise<SupabaseClient>;
   private login?: Promise<AuthState>;

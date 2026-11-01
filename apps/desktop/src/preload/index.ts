@@ -29,6 +29,7 @@ const api: DesktopApi = {
   applicationAudio: action => ipcRenderer.invoke(IPC.applicationAudio,action),
   onApplicationAudio: listener => {const receive=(_event:Electron.IpcRendererEvent,data:Uint8Array)=>listener(data);ipcRenderer.on(IPC.applicationAudioData,receive);return()=>ipcRenderer.removeListener(IPC.applicationAudioData,receive);},
   onApplicationAudioEnd: listener => {const receive=()=>listener();ipcRenderer.on(IPC.applicationAudioEnd,receive);return()=>ipcRenderer.removeListener(IPC.applicationAudioEnd,receive);},
+  voiceRecording:enabled=>ipcRenderer.invoke(IPC.voiceRecording,enabled),
   microphoneTest: enabled => ipcRenderer.invoke(IPC.microphoneTest, enabled),
   captureSources: () => ipcRenderer.invoke(IPC.captureSources),
   selectCapture: (id, audio) => ipcRenderer.invoke(IPC.selectCapture, id, audio),

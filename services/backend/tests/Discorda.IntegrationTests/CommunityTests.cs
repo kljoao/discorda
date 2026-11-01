@@ -16,6 +16,21 @@ namespace Discorda.IntegrationTests;
 public sealed class CommunityTests(AuthFixture fixture) : IClassFixture<AuthFixture>
 {
     [Fact]
+    public async Task AttachmentDownloadPreservesBytesAndRequiresAccess()
+    {
+        await using var app=fixture.App();var member=await Member(app);using var client=member.Client;
+        var uploaded=await client.PostAsJsonAsync(Tools+"/attachments",new{clientId=Guid.NewGuid(),name="photo.png",content="aGVsbG8="});uploaded.EnsureSuccessStatusCode();
+        var message=await uploaded.Content.ReadFromJsonAsync<JsonElement>();var id=message.GetProperty("attachments")[0].GetProperty("id").GetString();
+        var route=Tools+"/attachments/"+id+"?download=true";
+        using var anonymous=app.CreateClient();Assert.Equal(HttpStatusCode.Unauthorized,(await anonymous.GetAsync(route)).StatusCode);
+        var download=await client.GetAsync(route);download.EnsureSuccessStatusCode();
+        Assert.Equal("hello",await download.Content.ReadAsStringAsync());Assert.Equal("application/octet-stream",download.Content.Headers.ContentType!.MediaType);
+        Assert.Equal("attachment",download.Content.Headers.ContentDisposition!.DispositionType);
+        (await client.DeleteAsync(Messages+"/"+message.GetProperty("id").GetString()+"?version=1")).EnsureSuccessStatusCode();
+        Assert.Equal(HttpStatusCode.NotFound,(await client.GetAsync(route)).StatusCode);
+    }
+
+    [Fact]
     public async Task FilteredSearchHonorsAuthorDatesFilesAndArchivedChannels()
     {
         await using var app=fixture.App();var person=await Member(app);using var client=person.Client;

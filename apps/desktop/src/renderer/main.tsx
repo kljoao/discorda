@@ -9,6 +9,7 @@ import './server-navigation.css';
 import './conversation-layout.css';
 import './reliability.css';
 import './features.css';
+import './chat-rework.css';
 
 applyAccessibility(readAccessibility());
 createRoot(document.getElementById('root')!).render(<StrictMode><App /></StrictMode>);

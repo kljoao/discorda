@@ -47,7 +47,7 @@ public static class ChatFeatures
             var files=db.MessageAttachments.AsQueryable();
             if(fileType=="image")files=files.Where(a=>a.Name.ToLower().EndsWith(".png")||a.Name.ToLower().EndsWith(".jpg")||a.Name.ToLower().EndsWith(".jpeg")||a.Name.ToLower().EndsWith(".webp")||a.Name.ToLower().EndsWith(".gif"));
             if(fileType=="video")files=files.Where(a=>a.Name.ToLower().EndsWith(".mp4")||a.Name.ToLower().EndsWith(".webm")||a.Name.ToLower().EndsWith(".mkv"));
-            if(fileType=="audio")files=files.Where(a=>a.Name.ToLower().EndsWith(".mp3")||a.Name.ToLower().EndsWith(".wav")||a.Name.ToLower().EndsWith(".ogg")||a.Name.ToLower().EndsWith(".flac"));
+            if(fileType=="audio")files=files.Where(a=>a.Name.ToLower().EndsWith(".mp3")||a.Name.ToLower().EndsWith(".wav")||a.Name.ToLower().EndsWith(".ogg")||a.Name.ToLower().EndsWith(".flac")||a.Name.ToLower().EndsWith(".weba")||a.Name.ToLower().EndsWith(".m4a"));
             if(fileType=="document")files=files.Where(a=>a.Name.ToLower().EndsWith(".pdf")||a.Name.ToLower().EndsWith(".txt")||a.Name.ToLower().EndsWith(".docx")||a.Name.ToLower().EndsWith(".xlsx")||a.Name.ToLower().EndsWith(".pptx"));
             if(!string.IsNullOrEmpty(fileType))messages=messages.Where(m=>files.Any(a=>a.MessageId==m.Id));
             var ids=await messages.OrderByDescending(m=>m.Id).Select(m=>m.Id).Take(51).ToArrayAsync(ct);

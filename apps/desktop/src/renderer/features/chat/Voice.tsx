@@ -2,7 +2,6 @@ import {VoiceStage} from './VoiceStage';
 import {bindStreamSubscriptions,streamKey,watchingParticipant} from './stream-subscriptions';
 import {setPrivateSharing,quietSharing} from './privacy';
 import {CallHealth} from './CallHealth';
-import {TemporaryRoom} from './TemporaryRoom';
 import {comparePeople} from './voice-order';
 import {CallCheck} from './CallCheck';
 import {scopedKey} from '../../lib/server-scope';
@@ -14,7 +13,7 @@ import { SettingsDialog } from './SettingsDialog';
 import { useEffect, useRef, useState, useMemo, type ReactNode } from 'react';
 import { createPortal } from 'react-dom';
 import { Room, RoomEvent, TrackEvent, Track, LocalVideoTrack, LocalAudioTrack, createLocalAudioTrack, type Participant, type RemoteAudioTrack, type RemoteParticipant } from 'livekit-client';
-import { Volume2, Mic, MicOff, Video, MonitorUp, PhoneOff, Headphones, X, VideoOff, VolumeX, Settings, ChevronUp, ChevronDown, Signal } from 'lucide-react';
+import { Volume2, Mic, MicOff, Video, MonitorUp, PhoneOff, Headphones, X, VideoOff, VolumeX, Settings, Plus, ChevronUp, ChevronDown, Signal } from 'lucide-react';
 import { bindCallSounds, type CallSound } from './call-sounds';
 import { CallRecovery, canRecover } from './recovery';
 import { Avatar } from './Avatar';
@@ -28,7 +27,7 @@ import { MicrophoneProcessor, readMicrophoneSettings, type MicrophoneSettings } 
 import type { CaptureSource, MediaGrant, VoiceMember, PresenceMember } from '../../../shared/ipc/contracts';
 
 type Channel = { id: string; name: string; temporary?:boolean };
-export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open, setOpen, account, self }: { presence?:PresenceMember[];channels:Channel[];self?:PresenceMember;userId?:string;mediaHost:HTMLElement|null;dockHost:HTMLElement|null;open:boolean;setOpen:(open:boolean)=>void;account:ReactNode }) {
+export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open, setOpen, account, self, onCreateChannel }: { onCreateChannel?:()=>void;presence?:PresenceMember[];channels:Channel[];self?:PresenceMember;userId?:string;mediaHost:HTMLElement|null;dockHost:HTMLElement|null;open:boolean;setOpen:(open:boolean)=>void;account:ReactNode }) {
   const callKey=scopedKey('last-call:'+userId);
   const [resumeChannel,setResumeChannel]=useState<string|undefined>(()=>{try{return localStorage.getItem(callKey)??undefined;}catch{return undefined;}});
   useEffect(()=>{if(!userId)return;try{setResumeChannel(localStorage.getItem(callKey)??undefined);}catch{}},[callKey,userId]);
@@ -49,7 +48,6 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   const previousParticipants=useRef<Participant[]>([]);
   const [watching,setWatching]=useState<Set<string>>(()=>new Set());
   const watchingRef=useRef(new Set<string>());
-  const [creatingRoom,setCreatingRoom]=useState(false);
   useEffect(()=>{if(!cinema)return;const escape=(e:KeyboardEvent)=>{if(e.key==='Escape'&&!document.fullscreenElement)setCinema(false);};window.addEventListener('keydown',escape);return()=>window.removeEventListener('keydown',escape);},[cinema]);
   const preferredInput=useRef(microphone.deviceId);
   function configureMicrophone(settings: MicrophoneSettings,preservePreferred=false) {if(!preservePreferred&&settings.deviceId!==microphone.deviceId)preferredInput.current=settings.deviceId;setMicrophone(settings);processor.configure({...settings,pushToTalk:shortcuts.enabled&&shortcuts.pushToTalk});try{localStorage.setItem('discorda:microphone',JSON.stringify({...settings,deviceId:preferredInput.current}));}catch{/* In-memory preferences still work. */}}
@@ -307,8 +305,8 @@ export function Voice({ presence=[], channels, userId, mediaHost, dockHost, open
   return <section className="voice-sidebar" aria-label="Canais de voz">
     {!room&&resumeChannel&&channels.some(c=>c.id===resumeChannel)&&<div className="call-resume"><p>Sua última chamada pode ser retomada.</p><button disabled={busy} onClick={()=>void join(channels.find(c=>c.id===resumeChannel)!).catch(()=>setError("Não foi possível retomar a chamada."))}>Voltar à chamada</button><small>Microfone e câmera desligados.</small><button onClick={()=>{setResumeChannel(undefined);try{localStorage.removeItem(callKey);}catch{}}}>Dispensar</button></div>}
     {room&&<CallHealth playback={active.current?.playback} onRepair={()=>void perform(async()=>{await room.startAudio();await active.current?.playback?.resume();await active.current?.playback?.notify('join',50);})} room={room} level={level} settings={{...microphone,pushToTalk:shortcuts.enabled&&shortcuts.pushToTalk}} deaf={deaf} output={outputDevice} onSettings={()=>{setSettingsTab('audio');setAudioSettings(true);}}/>}
-    <div className="chat-channel-label">Canais de voz</div>
-    <button className="temporary-room-button" onClick={()=>setCreatingRoom(true)}>＋ Criar sala temporária</button>{creatingRoom&&<TemporaryRoom close={()=>setCreatingRoom(false)} joined={item=>{setCreatingRoom(false);void perform(()=>join(item));}}/>}<nav>{channels.map(item=><div key={item.id}><button disabled={busy||testing} aria-current={channel?.id===item.id&&open?'page':undefined} className={channel?.id===item.id?(open?'selected connected':'connected'):''} onClick={()=>void perform(()=>join(item))}><Volume2 size={17}/><span title={item.temporary?'Sala temporária · expira após 2 minutos vazia':item.name}>{item.name}{item.temporary?' ◷':''}</span><small>{(rosterByChannel.get(item.id)??[]).length||''}</small></button><ul className="voice-roster">{(rosterByChannel.get(item.id)??[]).map(p=><li key={p.userId} className={(participantsByLease.get(p.leaseId??'')?.isSpeaking||(speakers[p.leaseId??'']?.speaking&&speakers[p.leaseId??''].until>Date.now()))?'is-speaking':''}><button aria-label={p.name} disabled={p.userId===userId} title={p.userId===userId?'Você':'Clique com o botão direito para ajustar o volume'} onClick={e=>openVolume(p.userId,p.name,e.clientX,e.clientY)} onContextMenu={e=>{e.preventDefault();if(p.userId!==userId)openVolume(p.userId,p.name,e.clientX,e.clientY);}}><span className="voice-member-photo"><Avatar url={presenceById.get(p.userId)?.avatarUrl} name={p.name}/></span><span className="voice-member-name">{p.name}</span></button></li>)}</ul></div>)}</nav>
+    <div className="chat-channel-label">Canais de voz{onCreateChannel&&<button aria-label="Criar canal de voz" onClick={onCreateChannel}><Plus size={16}/></button>}</div>
+    <nav>{channels.map(item=><div key={item.id}><button disabled={busy||testing} aria-current={channel?.id===item.id&&open?'page':undefined} className={channel?.id===item.id?(open?'selected connected':'connected'):''} onClick={()=>void perform(()=>join(item))}><Volume2 size={17}/><span title={item.temporary?'Sala temporária · expira após 2 minutos vazia':item.name}>{item.name}{item.temporary?' ◷':''}</span><small>{(rosterByChannel.get(item.id)??[]).length||''}</small></button><ul className="voice-roster">{(rosterByChannel.get(item.id)??[]).map(p=><li key={p.userId} className={(participantsByLease.get(p.leaseId??'')?.isSpeaking||(speakers[p.leaseId??'']?.speaking&&speakers[p.leaseId??''].until>Date.now()))?'is-speaking':''}><button aria-label={p.name} disabled={p.userId===userId} title={p.userId===userId?'Você':'Clique com o botão direito para ajustar o volume'} onClick={e=>openVolume(p.userId,p.name,e.clientX,e.clientY)} onContextMenu={e=>{e.preventDefault();if(p.userId!==userId)openVolume(p.userId,p.name,e.clientX,e.clientY);}}><span className="voice-member-photo"><Avatar url={presenceById.get(p.userId)?.avatarUrl} name={p.name}/></span><span className="voice-member-name">{p.name}</span></button></li>)}</ul></div>)}</nav>
     {rosterError&&<small className="voice-error">Participantes indisponíveis.</small>}
     {room&&active.current?.playback&&participants.filter(p=>!p.isLocal).map(p=><RemoteAudio key={p.identity} participant={p as RemoteParticipant} playback={active.current!.playback!} deaf={deaf} volume={volumes[memberKey(p)]??defaultVolume} watchingScreen={watchingParticipant(p,watching)} revision={revision}/>)}
     {dockHost&&createPortal(<div className="voice-dock compact-dock">

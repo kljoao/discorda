@@ -3,6 +3,7 @@ import type { AuthController } from './auth/auth-controller';
 import { shell } from 'electron';
 import {stagedAttachmentAction} from './attachment-transfer';
 import {attachmentAction} from './attachments';
+import {sendVoiceMessage} from './voice-messages';
 
 const guid = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const id = /^[1-9][0-9]{0,18}$/;
@@ -29,12 +30,13 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
   if (a.kind === 'profile' && text(a.displayName, 32)) return;
   if (a.kind === 'renameWorkspace' && text(a.name,80) && !/[\p{Cc}\p{Cf}]/u.test(String(a.name))) return;
   if (a.kind === 'temporaryRoom' && text(a.name,40)) return;
-  if (a.kind === 'channel' && text(a.name, 80)) return;
+  if (a.kind === 'channel' && text(a.name, 80) && (a.type===undefined||a.type==='text'||a.type==='voice')) return;
   if (typeof a.channelId !== 'string' || !guid.test(a.channelId)) throw new Error('Invalid channel');
+  if(a.kind==='voiceSend'&&typeof a.clientId==='string'&&guid.test(a.clientId)&&a.bytes instanceof Uint8Array&&a.bytes.byteLength>=32&&a.bytes.byteLength<=8*1024*1024&&typeof a.durationMs==='number'&&Number.isFinite(a.durationMs)&&a.durationMs>=500&&a.durationMs<=120000)return;
   if(a.kind==='attachmentTransfer'&&typeof a.clientId==='string'&&guid.test(a.clientId)&&typeof a.token==='string'&&guid.test(a.token))return;
   if(a.kind==='threadFollow'&&numberId(a.id)&&(a.enabled===undefined||typeof a.enabled==='boolean'))return;
   if(a.kind==='attachmentUpload'&&typeof a.clientId==='string'&&guid.test(a.clientId))return;
-  if(a.kind==='attachmentGet'&&typeof a.id==='string'&&guid.test(a.id)&&(a.preview===undefined||typeof a.preview==='boolean'))return;
+  if(a.kind==='attachmentGet'&&typeof a.id==='string'&&guid.test(a.id)&&(a.preview===undefined||typeof a.preview==='boolean')&&(a.operation===undefined||['preview','download','copyImage','copyLink'].includes(String(a.operation))))return;
   if((a.kind==='message'||a.kind==='context')&&numberId(a.id))return;
   if(a.kind==='read'&&numberId(a.id))return;
   if(a.kind==='pins'&&(a.before===undefined||numberId(a.before)))return;
@@ -50,6 +52,7 @@ export function validateChatAction(value: unknown): asserts value is ChatAction 
 export async function chatAction(auth: AuthController, value: unknown): Promise<ChatResult> {
   validateChatAction(value);
   const action = value;
+  if(action.kind==='voiceSend')return sendVoiceMessage(auth,action);
   if(action.kind==='attachmentStage'||action.kind==='attachmentTransfer'||action.kind==='attachmentProgress'||action.kind==='attachmentCancel')return stagedAttachmentAction(auth,action);
   if(action.kind==='catchUp')return auth.chatRequest('/catch-up'+(action.since?'?since='+encodeURIComponent(action.since):''));
   if(action.kind==='inbox')return auth.chatRequest('/inbox?'+new URLSearchParams({...action.before?{before:action.before}:{},...action.unread?{unread:'true'}:{}}));
@@ -57,13 +60,17 @@ export async function chatAction(auth: AuthController, value: unknown): Promise<
   if(action.kind==='threadFollow')return auth.chatRequest('/channels/'+action.channelId+'/threads/'+action.id+'/follow',action.enabled===undefined?'GET':'PUT',action.enabled===undefined?undefined:{enabled:action.enabled});
   if(action.kind==='attachmentUpload'||action.kind==='attachmentGet')return attachmentAction(auth,action);
   if(action.kind==='temporaryRoom')return auth.chatRequest('/temporary-rooms','POST',{name:action.name});
-  if (action.kind === 'openLink') { await shell.openExternal(action.url); return { ok: true, data: null }; }
+  if (action.kind === 'openLink') {
+    const attachment=auth.attachmentFromUrl(action.url);
+    if(attachment)return attachmentAction(auth,{kind:'attachmentGet',...attachment,operation:'download'});
+    await shell.openExternal(action.url); return { ok: true, data: null };
+  }
   if (action.kind === 'profile') return auth.chatRequest('/profile', 'PUT', {displayName: action.displayName});
   if (action.kind === 'members') return auth.chatRequest('/members');
   if (action.kind === 'voiceRoster') return auth.chatRequest('/media/roster');
   if (action.kind === 'renameWorkspace') return auth.chatRequest('/workspace','PUT',{name:action.name});
   if (action.kind === 'workspace') return auth.chatRequest('/workspace');
-  if (action.kind === 'channel') return auth.chatRequest('/channels', 'POST', { name: action.name });
+  if (action.kind === 'channel') return auth.chatRequest('/channels', 'POST', { name: action.name, type:action.type??'text' });
   if(action.kind==='reads')return auth.chatRequest('/reads');
   if(action.kind==='manageMembers')return auth.chatRequest('/management/members');
   if(action.kind==='audit')return auth.chatRequest('/management/audit'+(action.before?'?before='+action.before:''));

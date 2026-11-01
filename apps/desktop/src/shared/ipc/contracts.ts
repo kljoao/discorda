@@ -47,6 +47,7 @@ export interface DesktopApi {
   onApplicationAudio(listener:(data:Uint8Array)=>void):()=>void;
   onApplicationAudioEnd(listener:()=>void):()=>void;
   microphoneTest(enabled: boolean): Promise<void>;
+  voiceRecording(enabled:boolean):Promise<void>;
   captureSources(): Promise<CaptureSource[]>;
   selectCapture(id: string, audio: boolean): Promise<void>;
   startLive(): Promise<void>;
@@ -66,7 +67,7 @@ export const IPC = {
   servers:'app:servers',inviteEvent:'app:invite',
   shortcuts:'app:shortcuts',shortcutEvent:'app:shortcut-event',
   audioStatus:'media:audio-status', devicePermissions:'media:permissions', audioApplications:'media:applications', applicationAudio:'media:application-audio', applicationAudioData:'media:audio-data', applicationAudioEnd:'media:audio-end',
-  microphoneTest: 'media:test', media: 'media:action', captureSources: 'media:sources', selectCapture: 'media:select',
+  voiceRecording:'media:voice-recording',microphoneTest: 'media:test', media: 'media:action', captureSources: 'media:sources', selectCapture: 'media:select',
   updates:'app:updates',importServer:'app:import-server',connectServer:'app:connect-server',appInfo: 'app:info',
   powerState:'app:power-state',services: 'app:check-services', admin:'admin:action',notifyMessage:'chat:notify', diagnostics:'app:diagnostics', reconnectLive:'live:reconnect',
   authState: 'auth:state',
@@ -80,10 +81,10 @@ export const IPC = {
 export interface ChatMessage { threadReplyCount?:number; threadRootId?:string|null; attachments?:{id:string;name:string;size:number}[]; replyAuthorId?:string|null; id: string; channelId: string; authorId: string; authorName: string; clientId: string; body: string; replyToId: string | null; createdAt: string; editedAt: string | null; deletedAt: string | null; version: number; }
 export interface ChatWorkspace { isAdmin?:boolean; id: string; name: string; userId: string; role: 'Owner' | 'Admin' | 'Moderator' | 'Member'; channels: { id: string; name: string;lastMessageId?:string|null }[]; voiceChannels?: { id: string; name: string;temporary?:boolean }[]; }
 export type ManagementAction = {kind:'manageMembers'} | {kind:'audit';before?:string} | {kind:'role';userId:string;role:'Admin'|'Moderator'|'Member'} | {kind:'moderateVoice';userId:string;channelId?:string};
-export type ChatAction = {kind:'catchUp';since?:string}| {kind:"attachmentStage";name:string;bytes:Uint8Array}|{kind:"attachmentTransfer";channelId:string;clientId:string;token:string}|{kind:"attachmentProgress";token:string}|{kind:"attachmentCancel";token:string}| {kind:"inbox";before?:string;unread?:boolean}|{kind:"inboxRead";id:string}|{kind:"threadFollow";channelId:string;id:string;enabled?:boolean}| {kind:'message';channelId:string;id:string}|{kind:'context';channelId:string;id:string} | {kind:'temporaryRoom';name:string} | {kind:'attachmentUpload';channelId:string;clientId:string} | {kind:'attachmentGet';channelId:string;id:string;preview?:boolean} | {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
+export type ChatAction = {kind:'voiceSend';channelId:string;clientId:string;bytes:Uint8Array;durationMs:number} | {kind:'catchUp';since?:string}| {kind:"attachmentStage";name:string;bytes:Uint8Array}|{kind:"attachmentTransfer";channelId:string;clientId:string;token:string}|{kind:"attachmentProgress";token:string}|{kind:"attachmentCancel";token:string}| {kind:"inbox";before?:string;unread?:boolean}|{kind:"inboxRead";id:string}|{kind:"threadFollow";channelId:string;id:string;enabled?:boolean}| {kind:'message';channelId:string;id:string}|{kind:'context';channelId:string;id:string} | {kind:'temporaryRoom';name:string} | {kind:'attachmentUpload';channelId:string;clientId:string} | {kind:'attachmentGet';channelId:string;id:string;preview?:boolean;operation?:'preview'|'download'|'copyImage'|'copyLink'} | {kind:'renameWorkspace';name:string} | ManagementAction | {kind:'reads'} | {kind:'read';channelId:string;id:string}
   | {kind:'search';channelId:string;query:string;before?:string;author?:string;after?:string;until?:string;fileType?:'any'|'image'|'video'|'audio'|'document'} | {kind:'pins';channelId:string;before?:string}
   | {kind:'annotations';channelId:string;ids:string[]} | {kind:'reaction';channelId:string;id:string;emoji:string;enabled:boolean}
-  | {kind:'pin';channelId:string;id:string;enabled:boolean} | { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string } | { kind: 'openLink'; url: string }
+  | {kind:'pin';channelId:string;id:string;enabled:boolean} | { kind: 'profile'; displayName: string } | { kind: 'members' } | { kind: 'voiceRoster' } | { kind: 'workspace' } | { kind: 'channel'; name: string; type?:'text'|'voice' } | { kind: 'openLink'; url: string }
   | { kind: 'history'; channelId: string; before?: string; thread?:string }
   | { kind: 'send'; channelId: string; clientId: string; body: string; replyToId?: string; threadRootId?:string }
   | { kind: 'edit'; channelId: string; id: string; version: number; body: string }

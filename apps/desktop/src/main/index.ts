@@ -193,6 +193,7 @@ else {
     ipcMain.handle(IPC.audioStatus,(event,...args:unknown[])=>{assertSender(event,args);return media.audio.status();});
     ipcMain.handle(IPC.audioApplications,(event,...args:unknown[])=>{assertSender(event,args);return media.audio.list();});
     ipcMain.handle(IPC.applicationAudio,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||!args[0]||typeof args[0]!=='object')throw new Error('IPC request rejected');const action=args[0] as {kind?:unknown;id?:unknown};if(action.kind==='start')return media.audio.start(action.id);if(action.kind==='stop')return media.audio.stop();if(action.kind==='pulse')return media.audio.pulse();throw new Error('IPC request rejected');});
+    ipcMain.handle(IPC.voiceRecording,(event,...args:unknown[])=>{assertSender(event,[]);if(args.length!==1||typeof args[0]!=='boolean')throw Error('IPC request rejected');return media.recordVoice(args[0]);});
     ipcMain.handle(IPC.microphoneTest, (event, ...args: unknown[]) => { assertSender(event, []); if (args.length !== 1 || typeof args[0] !== 'boolean') throw new Error('IPC request rejected'); return media.testMicrophone(args[0]); });
     ipcMain.handle(IPC.captureSources, (event, ...args: unknown[]) => { assertSender(event, args); return media.listSources(); });
     ipcMain.handle(IPC.selectCapture, (event, ...args: unknown[]) => { assertSender(event, []); if (args.length !== 2) throw new Error('IPC request rejected'); media.selectSource(args[0], args[1]); });

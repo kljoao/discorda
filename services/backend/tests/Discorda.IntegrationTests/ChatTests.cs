@@ -26,6 +26,23 @@ public sealed class ChatTests(AuthFixture fixture) : IClassFixture<AuthFixture>
     private static string Route(Guid channel) => $"/api/v1/chat/channels/{channel}/messages";
 
     [Fact]
+    public async Task AdminCanCreatePermanentVoiceChannelAndMembersCannot()
+    {
+        var email=Guid.NewGuid()+"@example.test";
+        await using var app=fixture.App().WithWebHostBuilder(b=>b.ConfigureAppConfiguration((_,c)=>c.AddInMemoryCollection(new Dictionary<string,string?>{["Admin:Email"]=email})));
+        using var admin=await Member(app,email); using var member=await Member(app);
+        Assert.Equal(HttpStatusCode.Forbidden,(await member.PostAsJsonAsync("/api/v1/chat/channels",new NewChannel("🎮 Amigos","voice"))).StatusCode);
+        Assert.Equal(HttpStatusCode.BadRequest,(await admin.PostAsJsonAsync("/api/v1/chat/channels",new NewChannel("Invalid","other"))).StatusCode);
+        var response=await admin.PostAsJsonAsync("/api/v1/chat/channels",new NewChannel("🎮 Amigos","voice"));response.EnsureSuccessStatusCode();
+        var id=(await response.Content.ReadFromJsonAsync<JsonElement>()).GetProperty("id").GetGuid();
+        await using var db=fixture.Database();var saved=await db.Channels.SingleAsync(c=>c.Id==id);
+        Assert.Equal(Discorda.Core.Channels.ChannelType.Voice,saved.Type);Assert.Null(saved.TemporaryOwnerId);
+        var workspace=await admin.GetFromJsonAsync<JsonElement>("/api/v1/chat/workspace");
+        Assert.Contains(workspace.GetProperty("voiceChannels").EnumerateArray(),c=>c.GetProperty("id").GetGuid()==id);
+        Assert.DoesNotContain(workspace.GetProperty("channels").EnumerateArray(),c=>c.GetProperty("id").GetGuid()==id);
+    }
+
+    [Fact]
     public async Task CustomNamePersistsAcrossAuthAndIsScopedToCurrentUser()
     {
         await using var app = fixture.App(); using var client = await Member(app); using var other = await Member(app);

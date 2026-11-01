@@ -43,14 +43,16 @@ public static class Attachments
             var saved = await ChatEndpoints.Views(db, m => m.Id == message.Id).SingleAsync(ct);
             await live.Publish("message", saved); return Results.Ok(saved);
         }).WithMetadata(new RequestSizeLimitAttribute(12 * 1024 * 1024));
-        api.MapGet("/{id:guid}", async (Guid channelId, Guid id, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) =>
+        api.MapGet("/{id:guid}", async (Guid channelId, Guid id, bool? download, HttpContext ctx, DiscordaDbContext db, CancellationToken ct) =>
         {
             var user = ((MemberProfile)ctx.Items[typeof(MemberProfile)]!).Id;
             if (!await ChatEndpoints.Access(db, channelId, user, ct)) return Results.NotFound();
             var file = await (from a in db.MessageAttachments.AsNoTracking() join m in db.Messages on a.MessageId equals m.Id
                 where a.Id == id && m.ChannelId == channelId && m.DeletedAt == null select a).SingleOrDefaultAsync(ct);
             ctx.Response.Headers.CacheControl = "no-store";
-            return file is null ? Results.NotFound() : Results.Ok(new { file.Name, Content = Convert.ToBase64String(file.Content) });
+            if (file is null) return Results.NotFound();
+            if (download == true) return Results.File(file.Content, "application/octet-stream", file.Name, enableRangeProcessing: true);
+            return Results.Ok(new { file.Name, Content = Convert.ToBase64String(file.Content) });
         });
     }
 }
