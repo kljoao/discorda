@@ -75,7 +75,7 @@ export class MediaController {
   }
   async listSources() {
     if (!this.active) return [];
-    const sources = await desktopCapturer.getSources({types: ['screen', 'window'], thumbnailSize: { width: 240, height: 135 }});
+    const sources = await desktopCapturer.getSources({types: ['screen', 'window'], thumbnailSize: { width: 480, height: 270 }});
     this.sources = new Set(sources.map(s => s.id));
     return sources.filter(s => s.name !== 'Discorda').map(s => ({id: s.id, name: s.name, thumbnail: s.thumbnail.toDataURL()}));
   }

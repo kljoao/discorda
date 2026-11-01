@@ -1,8 +1,10 @@
 import {execFileSync} from 'node:child_process';
-import {readFileSync} from 'node:fs';
+import {existsSync,readFileSync} from 'node:fs';
 const files = execFileSync('git',['ls-files','--cached','--others','--exclude-standard','-z'],{encoding:'utf8'}).split('\0').filter(Boolean);
 const failures = [];
 for (const file of new Set(files)) {
+  // Tracked files intentionally removed in this change are no longer audit inputs.
+  if (!existsSync(file)) continue;
   if (/(?:^|\/)(?:\.discorda|artifacts|node_modules|bin|obj|release)\/|(?:^|\/)(?:lan|server)\.json$|\.pfx$|\.p12$|(?:^|\/)\.env$/.test(file)) {
     failures.push(`${file}: arquivo privado/gerado incluído no conjunto público`); continue;
   }

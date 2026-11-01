@@ -1,0 +1,79 @@
+.capture-modal[open] { width:min(780px,calc(100vw - 32px));max-height:92dvh;padding:0;border:1px solid #3c3e4b;border-radius:18px;background:#1b1c23;color:#eef0f8;box-shadow:0 24px 90px #0009; }
+.capture-modal::backdrop { background:#080a10b8;backdrop-filter:blur(5px); }
+.capture-modal .capture-picker { display:flex;flex-direction:column;width:100%;max-height:92dvh;padding:0;overflow:hidden;border:0;border-radius:inherit;background:transparent;box-shadow:none; }
+.capture-modal .capture-title { flex:none;margin:0;padding:24px;align-items:center;border-bottom:1px solid #ffffff0d; }
+.capture-heading { display:flex;align-items:center;gap:14px;min-width:0; }
+.capture-heading-icon { display:grid;place-items:center;width:44px;height:44px;flex:none;border:1px solid #abb5ff30;border-radius:13px;background:#abb5ff12;color:var(--accent); }
+.capture-modal .capture-title h2 { font-size:20px;letter-spacing:-.4px;color:#f1f2fa; }
+.capture-modal .capture-title p { margin:5px 0 0;font-size:12px;color:#a5a8ba; }
+.capture-modal button.capture-close { display:grid;place-items:center;flex:none;padding:8px;background:transparent;border-color:transparent; }
+.capture-modal button.capture-close:hover { background:#ffffff09; }
+.capture-body { overflow:auto;min-height:0;padding:20px 24px 24px; }
+.capture-tabs { display:flex;gap:6px;padding:5px;border:1px solid #ffffff0c;border-radius:12px;background:#121319; }
+.capture-modal .capture-tabs button { display:flex;align-items:center;justify-content:center;gap:9px;flex:1;min-height:42px;border:1px solid transparent;border-radius:8px;background:transparent;font-size:13px;font-weight:600;color:#a5a8b9; }
+.capture-modal .capture-tabs button[aria-selected=true] { color:#e2e6ff;border-color:#abb5ff30;background:#abb5ff14;box-shadow:0 2px 6px #0002; }
+.capture-tabs small { padding:2px 6px;border-radius:5px;background:#ffffff08;font-size:10px;font-variant-numeric:tabular-nums; }
+.capture-source-panel { max-height:300px;overflow:auto;padding:0 3px 4px;scrollbar-gutter:stable; }
+.capture-modal .capture-source-hint { margin:16px 0 12px;color:#a5a8ba; }
+.capture-modal .capture-grid { display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:14px; }
+.capture-modal .capture-grid button { min-width:0;padding:7px;border:1px solid #3b3d4a;border-radius:12px;background:#23242d;text-align:left;transition:border-color 120ms,background 120ms; }
+.capture-modal .capture-grid button:hover { border-color:#7f88bc;background:#2a2c38; }
+.capture-modal .capture-grid button[aria-pressed=true] { border-color:var(--accent);background:#abb5ff12;box-shadow:0 0 0 1px var(--accent); }
+.capture-preview { position:relative;aspect-ratio:16/9;overflow:hidden;border-radius:7px;background:#101116; }
+.capture-modal .capture-grid img { display:block;width:100%;height:100%;object-fit:contain;border-radius:0; }
+.capture-modal .capture-grid .capture-selection { position:absolute;top:9px;right:9px;width:18px;height:18px;margin:0;border:2px solid #b8bfd0;border-radius:50%;background:#11182780; }
+.capture-modal .capture-grid button[aria-pressed=true] .capture-selection { background:var(--accent);border-color:var(--accent);box-shadow:inset 0 0 0 4px #282b40; }
+.capture-modal .capture-grid .capture-source-name { display:flex;align-items:center;gap:8px;max-width:none;margin:12px 5px 6px;color:#e2e4ef; }
+.capture-source-name svg { flex:none;color:#a6abc2; }
+.capture-modal .capture-grid .capture-source-name span { margin:0;max-width:none;min-width:0;overflow:hidden;text-overflow:ellipsis;font-size:12px;line-height:1.5; }
+.capture-empty { display:flex;flex-direction:column;align-items:center;gap:10px;padding:32px 20px;text-align:center;border:1px dashed #414451;border-radius:12px;color:#a9afca; }
+.capture-empty strong { color:#dfe2ef;font-size:14px; }
+.capture-modal .capture-empty p { max-width:360px;margin:0; }
+.capture-quality { margin-top:24px;padding:18px;border:1px solid #ffffff10;border-radius:12px;background:#ffffff03; }
+.capture-section-heading { display:flex;align-items:center;gap:8px;margin-bottom:16px;color:#b6bedf; }
+.capture-section-heading h3 { margin:0;color:#e1e4f1;font-size:13px;font-weight:600; }
+.capture-section-heading>small { margin-left:auto;font-size:10px;color:#a6aabd; }
+.capture-modal .capture-options { display:grid;grid-template-columns:1.2fr 1fr 1fr;gap:12px;min-width:0;margin:0;padding:0;border:0;background:transparent; }
+.capture-options:disabled { opacity:.6; }
+.custom-select { position:relative;min-width:0; }
+.custom-select-label { display:block;margin-bottom:7px;font-size:11px;font-weight:600;color:#b0b4c6; }
+.capture-modal button.custom-select-trigger { display:flex;justify-content:space-between;align-items:center;gap:8px;width:100%;min-height:60px;padding:10px 12px;border:1px solid #454858;border-radius:9px;background:#252731;text-align:left;color:#e9ebf7; }
+.custom-select-trigger>span,.custom-select-menu [role=option]>span { display:flex;flex-direction:column;gap:5px;min-width:0; }
+.custom-select-trigger strong,.custom-select-menu strong { font-size:12px;font-weight:500; }
+.custom-select-trigger small,.custom-select-menu small { font-size:10px;line-height:1.4;color:#aeb3c8; }
+.custom-select-trigger svg { flex:none;color:#aeb5d5; }
+.capture-modal button.custom-select-trigger[aria-expanded=true] { border-color:var(--accent); }
+.custom-select-menu { position:absolute;bottom:calc(100% - 16px);left:0;width:max(100%,220px);max-width:calc(100vw - 90px);max-height:270px;overflow:auto;padding:5px;z-index:5;border:1px solid #52576e;border-radius:10px;background:#252732;box-shadow:0 12px 40px #0009; }
+.custom-select:last-child .custom-select-menu { left:auto;right:0; }
+.custom-select-menu [role=option] { display:flex;align-items:center;justify-content:space-between;gap:12px;min-height:48px;padding:9px 10px;border-radius:6px;cursor:pointer; }
+.custom-select-menu [role=option].active { background:#abb5ff17; }
+.custom-select-menu [aria-selected=true] { color:#ccd3ff; }
+.capture-modal .capture-quality-hint { margin:12px 0 0;font-size:11px;line-height:1.6;color:#9fa5bb; }
+.capture-audio { display:flex;align-items:center;gap:10px;margin-top:20px;color:#a8c7b8; }
+.capture-audio svg { flex:none; }
+.capture-audio strong { font-size:12px;font-weight:500;color:#d2e3da; }
+.capture-modal .capture-audio p { margin:3px 0 0;font-size:11px; }
+.capture-modal label.capture-browser-option { display:flex;flex-wrap:wrap;gap:7px;align-items:center;margin:12px 0 0;font-size:11px;color:#b4b9cc; }
+.capture-browser-option input { accent-color:var(--accent); }
+.capture-browser-option span { color:#9097af;font-size:10px; }
+.capture-footer { display:flex;align-items:center;justify-content:space-between;gap:20px;flex:none;padding:18px 24px;border-top:1px solid #ffffff10;background:#17181f; }
+.capture-footer>span { min-width:0;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-size:11px;color:#a6adc6; }
+.capture-footer>div { display:flex;gap:8px;flex:none; }
+.capture-modal .capture-footer button { display:flex;align-items:center;justify-content:center;gap:8px;min-height:40px;padding:10px 16px;border-radius:8px;font-size:12px; }
+.capture-modal button.capture-submit { background:var(--accent);border-color:var(--accent);color:#171a30;font-weight:600; }
+.capture-modal button:disabled { opacity:.45;cursor:default; }
+.capture-modal button:focus-visible,.capture-modal [role=tabpanel]:focus-visible { outline:2px solid var(--accent);outline-offset:3px; }
+@media(max-width:600px) {
+  .capture-modal .capture-title { padding:18px; }
+  .capture-heading-icon { display:none; }
+  .capture-modal .capture-title h2 { font-size:18px; }
+  .capture-body { padding:16px; }
+  .capture-quality { padding:14px; }
+  .capture-modal .capture-options { grid-template-columns:repeat(2,minmax(0,1fr)); }
+  .capture-options .custom-select:first-child { grid-column:1/-1; }
+  .capture-modal .capture-grid { gap:10px; }
+  .capture-footer { padding:14px 16px;gap:10px;flex-wrap:wrap; }
+  .capture-footer>span { width:100%; }
+  .capture-footer>div { width:100%;justify-content:flex-end; }
+}
+@media(prefers-reduced-motion:reduce) { .capture-modal .capture-grid button { transition:none; } }

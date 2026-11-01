@@ -1,10 +1,11 @@
 import { RoomEvent, Track, type Room, type TrackPublication, type Participant } from 'livekit-client';
 
-export type CallSound = 'join' | 'leave' | 'share' | 'stopShare';
+export type CallSound = 'join' | 'leave' | 'share' | 'stopShare' | 'watch' | 'stopWatching';
 // Original short cues, synthesized locally: no downloaded sound assets.
 export const cues: Record<CallSound, readonly number[]> = {
   join: [523.25, 783.99], leave: [587.33, 392],
   share: [659.25, 830.61, 987.77], stopShare: [830.61, 659.25, 493.88],
+  watch: [622.25, 932.33], stopWatching: [698.46, 466.16],
 };
 export function playCallSound(context: AudioContext, destination: AudioNode, kind: CallSound, volume: number) {
   if (context.state === 'closed' || volume <= 0) return Promise.resolve();

@@ -17,6 +17,6 @@ export function screenOptions(quality:keyof typeof screenProfiles|'auto',fps:30|
 export const sharingPresets = {
  auto:{label:'Automático',description:'Equilibra nitidez e fluidez conforme a rede.',quality:'auto',fps:60},
  games:{label:'Jogos',description:'Prioriza movimentos suaves a 60 fps, até 1080p.',quality:'auto',fps:60},
- movies:{label:'Filmes',description:'Vídeo a 30 fps, até 1080p. Ative o som se desejar.',quality:'auto',fps:30},
+ movies:{label:'Filmes',description:'Vídeo a 30 fps, até 1080p, com som incluído.',quality:'auto',fps:30},
  text:{label:'Texto e código',description:'Prioriza a leitura em 1440p e 30 fps; exige mais banda.',quality:'1440',fps:30}
 } as const;
