@@ -2,14 +2,15 @@ import {useEffect,useRef,useState} from 'react';
 import {Mic,Square,Trash2,Send,LoaderCircle} from 'lucide-react';
 import {AudioSpectrum} from './AudioSpectrum';
 import {AudioMessage,audioPlaybackEvent,audioTime} from './AudioMessage';
-import {readMicrophoneSettings} from './microphone';
+import {readMicrophoneSettings,MicrophoneProcessor,voiceCaptureOptions} from './microphone';
+import {Track} from 'livekit-client';
 import {mediaErrorMessage} from './media-errors';
 import type {ChatMessage} from '../../../shared/ipc/contracts';
 
-type Capture={recorder:MediaRecorder;stream:MediaStream;output:MediaStream;context:AudioContext;source:MediaStreamAudioSourceNode;gain:GainNode;analyser:AnalyserNode;chunks:Blob[];size:number;started:number;timer?:ReturnType<typeof setInterval>};
+type Capture={recorder:MediaRecorder;stream:MediaStream;output:MediaStream;context:AudioContext;source:MediaStreamAudioSourceNode;processor:MicrophoneProcessor;analyser:AnalyserNode;chunks:Blob[];size:number;started:number;timer?:ReturnType<typeof setInterval>};
 type Draft={blob:Blob;url:string;duration:number;id:string};
 const maxSeconds=120,maxBytes=8*1024*1024;
-function release(capture:Capture){clearInterval(capture.timer);capture.stream.getTracks().forEach(track=>track.stop());capture.output.getTracks().forEach(track=>track.stop());capture.source.disconnect();capture.gain.disconnect();capture.analyser.disconnect();void capture.context.close().catch(()=>{});}
+function release(capture:Capture){clearInterval(capture.timer);capture.stream.getTracks().forEach(track=>track.stop());capture.output.getTracks().forEach(track=>track.stop());capture.source.disconnect();void capture.processor.destroy();capture.analyser.disconnect();void capture.context.close().catch(()=>{});}
 export function useVoiceComposer(channelId:string,onSent:(message:ChatMessage)=>void,disabled=false){
  const [phase,setPhase]=useState<'idle'|'requesting'|'recording'|'finishing'|'review'|'sending'>('idle'),[seconds,setSeconds]=useState(0),[analyser,setAnalyser]=useState<AnalyserNode>(),[draft,setDraft]=useState<Draft>(),[error,setError]=useState('');
  const capture=useRef<Capture|undefined>(undefined),currentDraft=useRef<Draft|undefined>(undefined),epoch=useRef(0),alive=useRef(true),working=useRef(false),trigger=useRef<HTMLButtonElement>(null);
@@ -21,18 +22,20 @@ export function useVoiceComposer(channelId:string,onSent:(message:ChatMessage)=>
  useEffect(()=>{if(phase!=='recording'&&phase!=='requesting')return;const suspend=()=>cancel();return window.discorda?.onPowerState(state=>{if(state==='suspend')suspend();});},[phase]);
  async function start(){
   if(working.current||disabled||phase!=='idle')return;working.current=true;const revision=++epoch.current;setError('');setSeconds(0);setPhase('requesting');
-  let stream:MediaStream|undefined,context:AudioContext|undefined;
+  let stream:MediaStream|undefined,context:AudioContext|undefined,processor:MicrophoneProcessor|undefined;
   try{
    if(!MediaRecorder.isTypeSupported('audio/webm;codecs=opus'))throw Error('Este computador não oferece o formato de gravação necessário.');
    window.dispatchEvent(new CustomEvent(audioPlaybackEvent,{detail:'recording'}));
    await window.discorda!.voiceRecording(true);if(revision!==epoch.current)return;
    const settings=readMicrophoneSettings();
-   stream=await navigator.mediaDevices.getUserMedia({audio:{deviceId:settings.deviceId?{exact:settings.deviceId}:undefined,echoCancellation:true,noiseSuppression:settings.noiseSuppression,autoGainControl:true,channelCount:1},video:false});
+   stream=await navigator.mediaDevices.getUserMedia({audio:voiceCaptureOptions(settings),video:false});
    if(revision!==epoch.current){stream.getTracks().forEach(track=>track.stop());return;}
-   context=new AudioContext();await context.resume();if(revision!==epoch.current){stream.getTracks().forEach(track=>track.stop());await context.close();return;}
-   const source=context.createMediaStreamSource(stream),gain=context.createGain(),analyser=context.createAnalyser(),output=context.createMediaStreamDestination();gain.gain.value=settings.gain;analyser.fftSize=1024;analyser.smoothingTimeConstant=.65;source.connect(gain).connect(analyser).connect(output);
-   const recorder=new MediaRecorder(output.stream,{mimeType:'audio/webm;codecs=opus',audioBitsPerSecond:64000});
-   const current:Capture={recorder,stream,context,source,gain,analyser,output:output.stream,chunks:[],size:0,started:performance.now()};capture.current=current;
+   context=new AudioContext({sampleRate:48000,latencyHint:'interactive'});await context.resume();if(revision!==epoch.current){stream.getTracks().forEach(track=>track.stop());await context.close();return;}
+   processor=new MicrophoneProcessor({...settings,gate:false,pushToTalk:false});await processor.init({audioContext:context,track:stream.getAudioTracks()[0],kind:Track.Kind.Audio});
+   if(revision!==epoch.current){stream.getTracks().forEach(track=>track.stop());await processor.destroy();await context.close();return;}
+   const output=new MediaStream([processor.processedTrack!]),source=context.createMediaStreamSource(output),analyser=context.createAnalyser();analyser.fftSize=1024;analyser.smoothingTimeConstant=.65;source.connect(analyser);
+   const recorder=new MediaRecorder(output,{mimeType:'audio/webm;codecs=opus',audioBitsPerSecond:64000});
+   const current:Capture={recorder,stream,context,source,processor,analyser,output,chunks:[],size:0,started:performance.now()};capture.current=current;
    recorder.ondataavailable=event=>{if(revision!==epoch.current||!event.data.size)return;current.chunks.push(event.data);current.size+=event.data.size;if(current.size>maxBytes){setError('O áudio atingiu o limite de tamanho. Grave uma mensagem mais curta.');stop();}};
    recorder.onstop=()=>{
     const duration=Math.min(maxSeconds,(performance.now()-current.started)/1000),blob=new Blob(current.chunks,{type:'audio/webm;codecs=opus'});release(current);
@@ -45,7 +48,7 @@ export function useVoiceComposer(channelId:string,onSent:(message:ChatMessage)=>
    stream.getAudioTracks()[0].addEventListener('ended',()=>{if(revision===epoch.current&&recorder.state==='recording'){setError('O microfone foi desconectado. Você pode revisar o trecho gravado.');stop();}});
    recorder.start(250);setAnalyser(analyser);setPhase('recording');
    current.timer=setInterval(()=>{if(revision!==epoch.current)return;const elapsed=(performance.now()-current.started)/1000;setSeconds(Math.min(maxSeconds,elapsed));if(elapsed>=maxSeconds)stop();},100);
-  }catch(e){stream?.getTracks().forEach(track=>track.stop());if(context?.state!=='closed')void context?.close().catch(()=>{});if(revision===epoch.current&&alive.current){capture.current=undefined;working.current=false;void window.discorda?.voiceRecording(false).catch(()=>{});setPhase('idle');setError(e instanceof DOMException?mediaErrorMessage(e):e instanceof Error?e.message:'Não foi possível gravar o áudio.');}}
+  }catch(e){await processor?.destroy();stream?.getTracks().forEach(track=>track.stop());if(context?.state!=='closed')void context?.close().catch(()=>{});if(revision===epoch.current&&alive.current){capture.current=undefined;working.current=false;void window.discorda?.voiceRecording(false).catch(()=>{});setPhase('idle');setError(e instanceof DOMException?mediaErrorMessage(e):e instanceof Error?e.message:'Não foi possível gravar o áudio.');}}
  }
  async function send(){
   const current=currentDraft.current;if(!current||working.current)return;working.current=true;const revision=epoch.current;setPhase('sending');setError('');window.dispatchEvent(new CustomEvent(audioPlaybackEvent,{detail:'sending'}));

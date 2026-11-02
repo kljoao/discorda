@@ -93,7 +93,7 @@ else {
     session.defaultSession.on('will-download', (event) => event.preventDefault());
     session.defaultSession.webRequest.onHeadersReceived((details, callback) => {
       const csp = [
-        "default-src 'self'", "script-src 'self'" + (development ? " 'unsafe-inline'" : ''), "style-src 'self'" + (development ? " 'unsafe-inline'" : ''),
+        "default-src 'self'", "script-src 'self' 'wasm-unsafe-eval'" + (development ? " 'unsafe-inline'" : ''), "style-src 'self'" + (development ? " 'unsafe-inline'" : ''),
         "media-src 'self' blob:", "img-src 'self' data: https://*.googleusercontent.com https://googleusercontent.com", "font-src 'self'", "object-src 'none'", "base-uri 'none'",
         "frame-src 'none'", "frame-ancestors 'none'", "form-action 'none'",
         `connect-src 'self'${lan ? ` ${lan.apiUrl} ${lan.apiUrl.replace('https:', 'wss:')}` : ''}${development ? ' ws://127.0.0.1:5173' : ''}`,

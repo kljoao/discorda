@@ -13,7 +13,7 @@ test('real audio worklet passes quiet push-to-talk and recovers after replacing 
       const context=new AudioContext(),oscillator=context.createOscillator(),gain=context.createGain();
       const input=context.createMediaStreamDestination();gain.gain.value=0.01;
       oscillator.connect(gain).connect(input);oscillator.start();
-      const processor=new MicrophoneProcessor({gain:1,threshold:-10,gate:true,pushToTalk:true,deviceId:''});
+      const processor=new MicrophoneProcessor({gain:1,threshold:-10,gate:true,pushToTalk:true,noiseSuppression:false,deviceId:''});
       const analyser=context.createAnalyser();analyser.fftSize=2048;
       let source:MediaStreamAudioSourceNode|undefined;
       const connect=()=>{source?.disconnect();source=context.createMediaStreamSource(new MediaStream([processor.processedTrack]));source.connect(analyser);};

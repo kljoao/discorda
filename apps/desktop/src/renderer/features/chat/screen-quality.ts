@@ -1,4 +1,4 @@
-import { VideoPreset, type ScreenShareCaptureOptions, type TrackPublishOptions } from 'livekit-client';
+import { VideoPreset, type LocalVideoTrack, type ScreenShareCaptureOptions, type TrackPublishOptions } from 'livekit-client';
 export const screenProfiles = {
   '720': {width:1280,height:720,bitrate:8_000_000},
   '1080': {width:1920,height:1080,bitrate:20_000_000},
@@ -11,7 +11,21 @@ export function screenOptions(quality:keyof typeof screenProfiles|'auto',fps:30|
   const profile=screenProfiles[automatic?'1080':quality];
   const h264=typeof RTCRtpSender!=='undefined'&&RTCRtpSender.getCapabilities('video')?.codecs.some(c=>c.mimeType.toLowerCase()==='video/h264');
   return {capture:{audio:false,resolution:{width:profile.width,height:profile.height,frameRate:fps},contentHint:intent==='text'?'detail':intent==='games'||intent==='movies'||fps===60?'motion':'detail'},
-    publish:{videoCodec:h264?'h264':'vp8',simulcast:automatic,screenShareSimulcastLayers:automatic?[new VideoPreset(640,360,800_000,30),new VideoPreset(1280,720,4_000_000,fps)]:undefined,screenShareEncoding:{maxBitrate:Math.round(profile.bitrate*(fps===30?0.7:1)),maxFramerate:fps,priority:'high'},degradationPreference:intent==='games'||intent==='movies'?'maintain-framerate':intent==='text'?'maintain-resolution':automatic?'balanced':'maintain-resolution'}};
+    publish:{videoCodec:h264?'h264':'vp8',simulcast:automatic,screenShareSimulcastLayers:automatic?[new VideoPreset(640,360,1_200_000,fps),new VideoPreset(1280,720,5_000_000,fps)]:undefined,screenShareEncoding:{maxBitrate:Math.round(profile.bitrate*(fps===30?0.7:1)),maxFramerate:fps,priority:'high'},degradationPreference:intent==='text'?'maintain-resolution':fps===60||intent==='games'||intent==='movies'?'maintain-framerate':'balanced'}};
+}
+
+/** Replacing a MediaStreamTrack does not update its RTP sender's encoding settings. */
+export async function applyScreenEncoding(track:Pick<LocalVideoTrack,'sender'|'setDegradationPreference'>,options:ReturnType<typeof screenOptions>){
+ await track.setDegradationPreference(options.publish.degradationPreference??'balanced');
+ const sender=track.sender;if(!sender)return;
+ const parameters=sender.getParameters(),top=options.publish.screenShareEncoding;
+ if(!parameters.encodings?.length||!top)return;
+ parameters.encodings.forEach((encoding,index)=>{
+   encoding.maxFramerate=top.maxFramerate;
+   // Preserve negotiated simulcast topology and LiveKit's inactive layer state.
+   encoding.maxBitrate=index===parameters.encodings.length-1?top.maxBitrate:Math.min(top.maxBitrate??20_000_000,index===0?1_200_000:5_000_000);
+ });
+ await sender.setParameters(parameters);
 }
 
 export const sharingPresets = {

@@ -5,6 +5,9 @@ import { fileURLToPath } from 'node:url';
 
 export default defineConfig({
   plugins: [react(), tailwindcss()],
+  // AudioWorklet supports modules; preserve import.meta.url rather than rewriting
+  // it to the DedicatedWorker-only self.location API.
+  worker: {format:'es'},
   resolve: { alias: { '@': fileURLToPath(new URL('./src/renderer', import.meta.url)) } },
   server: { host: '127.0.0.1', port: 5173, strictPort: true },
   build: { assetsInlineLimit: 0, outDir: 'dist/renderer', sourcemap: false },

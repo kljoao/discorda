@@ -1,7 +1,7 @@
 import {useEffect,useRef,useState} from 'react';
 import {LocalVideoTrack,RemoteVideoTrack,VideoQuality,type RemoteTrackPublication,type Track} from 'livekit-client';
 import {adaptQuality,initialQuality,type ReceiveMode} from './receive-quality';
-import {videoHealth,type VideoSample} from './media-quality';
+import {videoHealth,sampleVideo,type VideoSample} from './media-quality';
 
 export function TrackVideo({track,screen=false,publication}:{track:Track;screen?:boolean;publication?:RemoteTrackPublication}) {
   const ref=useRef<HTMLVideoElement>(null),policy=useRef(initialQuality);
@@ -20,9 +20,8 @@ export function TrackVideo({track,screen=false,publication}:{track:Track;screen?
       if(pending)return;pending=true;
       try {
         const report=await track.getRTCStatsReport();
-        const stats=report?[...report.values()].find(r=>(r.type==='inbound-rtp'||r.type==='outbound-rtp')&&(r.kind==='video'||r.mediaType==='video')):undefined;
-        if(!active||!stats)return;
-        const current:VideoSample={timestamp:stats.timestamp,bytes:stats.bytesReceived??stats.bytesSent??0,received:stats.packetsReceived??stats.packetsSent??0,lost:stats.packetsLost??0,frames:stats.framesDecoded??stats.framesEncoded??0,dropped:stats.framesDropped??0,jitter:stats.jitter??0,limitation:stats.qualityLimitationReason};
+        const current=report?sampleVideo(report,track instanceof LocalVideoTrack):undefined;
+        if(!active||!current)return;
         setHealth(videoHealth(current,previous));previous=current;
       }catch{/* The viewer remains available when statistics are unsupported. */}finally{pending=false;}
     };
@@ -31,11 +30,12 @@ export function TrackVideo({track,screen=false,publication}:{track:Track;screen?
   },[track,screen]);
   useEffect(()=>{
     if(!screen)return;
-    let frames=ref.current?.getVideoPlaybackQuality().totalVideoFrames??0,time=performance.now();
+    const displayed=()=>{const q=ref.current?.getVideoPlaybackQuality();return q?Math.max(0,q.totalVideoFrames-q.droppedVideoFrames):0;};
+    let frames=displayed(),time=performance.now();
     const timer=setInterval(()=>{
       const video=ref.current;if(!video||!video.videoHeight)return;
-      const now=performance.now(),total=video.getVideoPlaybackQuality().totalVideoFrames;
-      setStatistics(video.videoHeight+'p · '+Math.round((total-frames)*1000/(now-time))+' fps');frames=total;time=now;
+      const now=performance.now(),total=displayed();
+      setStatistics(video.videoHeight+'p · '+Math.max(0,Math.round((total-frames)*1000/(now-time)))+' fps');frames=total;time=now;
     },2000);
     return()=>clearInterval(timer);
   },[screen,track]);
@@ -52,6 +52,9 @@ export function TrackVideo({track,screen=false,publication}:{track:Track;screen?
       {publication&&<select aria-label="Qualidade recebida" disabled={!publication.simulcasted} value={receiveQuality} onChange={event=>setReceiveQuality(event.target.value as ReceiveMode)}><option value="auto">Automática · adapta à rede</option><option value="sharp">Nitidez máxima</option><option value="save">Economizar dados</option></select>}
       <p>{health?.hint??'Coletando métricas da transmissão…'}</p>
       {health&&<small>{health.mbps.toFixed(1)} Mbps · perda {health.loss.toFixed(1)}%</small>}
+      {health&&<small>{track instanceof LocalVideoTrack?'Envio':'Recepção'}: {Math.round(health.fps)} fps · descarte {health.drop.toFixed(1)}% · variação {Math.round(health.jitterMs)} ms</small>}
+      {health?.captureFps!==undefined&&<small>Captura: {Math.round(health.captureFps)} fps</small>}
+      {health?.encodeMs!==undefined&&<small>Codificação: {health.encodeMs.toFixed(1)} ms por quadro</small>}
       <small>Os FPS medem o vídeo exibido. Uma tela parada pode enviar menos quadros.</small>
     </div></details>}
   </>;

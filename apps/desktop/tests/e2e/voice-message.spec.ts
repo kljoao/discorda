@@ -10,6 +10,7 @@ test('voice messages record real audio, release capture, retry without duplicati
   await page.addInitScript(()=>{
    // Render the real audio graph through a native silent sink. CI needs no speakers.
    // Explicit device IDs still use the browser's actual device validation below.
+   localStorage.setItem('discorda:microphone',JSON.stringify({noiseMode:'standard'}));
    const NativeAudioContext=window.AudioContext;
    const setSink=(NativeAudioContext.prototype as AudioContext&{setSinkId:(id:string|{type:'none'})=>Promise<void>}).setSinkId;
    class TestAudioContext extends NativeAudioContext{

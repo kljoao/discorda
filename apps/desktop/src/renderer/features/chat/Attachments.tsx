@@ -1,5 +1,5 @@
 import {useEffect,useLayoutEffect,useRef,useState,type MouseEvent,type ReactNode} from 'react';
-import {createPortal} from 'react-dom';
+import {createPortal,flushSync} from 'react-dom';
 import {Download,Image as ImageIcon,Film,FileText,Link,Copy,Reply,Trash2,Expand,X,MoreHorizontal,LoaderCircle} from 'lucide-react';
 import {Modal} from '../../components/ui/modal';
 import {useDialogClose} from '../../components/ui/use-dialog-close';
@@ -74,7 +74,7 @@ function Attachment({file,message,avatarUrl,onReply,onDelete}:{file:File;message
 }
 function MediaLightbox({file,message,avatarUrl,onClose,onContextMenu,download,onReply,busy,notice,error,children}:{file:File;message:ChatMessage;avatarUrl?:string|null;onClose:()=>void;onContextMenu:(event:MouseEvent<HTMLElement>)=>void;download:()=>void;onReply?:()=>void;busy:boolean;notice:string;error:string;children:ReactNode}){
  const next=useRef<(()=>void)|undefined>(undefined);
- const {closing,dismiss}=useDialogClose(()=>{onClose();if(next.current)requestAnimationFrame(next.current);});
+ const {closing,dismiss}=useDialogClose(()=>{flushSync(onClose);if(next.current)requestAnimationFrame(next.current);});
  const date=new Date(message.createdAt);
  return <Modal label={'Prévia de '+file.name} className={'media-lightbox'+(closing?' is-closing':'')} onClose={dismiss}>
   <header><div className="lightbox-author"><Avatar url={avatarUrl} name={message.authorName}/><div><strong>{message.authorName}</strong><time dateTime={message.createdAt}>{date.toLocaleDateString('pt-BR')} às {date.toLocaleTimeString('pt-BR',{hour:'2-digit',minute:'2-digit'})}</time></div></div><div className="lightbox-toolbar">

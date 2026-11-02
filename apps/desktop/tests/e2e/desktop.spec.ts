@@ -3,7 +3,7 @@ const {version}=packageInfo;
 import { _electron as electron, expect, test } from '@playwright/test';
 import path from 'node:path';
 import os from 'node:os';
-import { mkdtemp } from 'node:fs/promises';
+import { mkdtemp, readdir } from 'node:fs/promises';
 import { createServer } from 'vite';
 
 test('built desktop loads with a sandboxed preload and functional health action', async () => {
@@ -32,6 +32,13 @@ test('built desktop loads with a sandboxed preload and functional health action'
     expect(preferences.contextIsolation).toBe(true);
     expect(preferences.sandbox).toBe(true);
     expect(preferences.nodeIntegration).toBe(false);
+    // Exercise packaged app:// asset loading and its real CSP, not just Vite's policy.
+    const assets=await readdir(path.resolve('dist/renderer/assets'));
+    const worklet=assets.find(name=>/^rnnoise-worklet-.*\.js$/.test(name))!;expect(worklet).toBeTruthy();
+    expect(await page.evaluate(async(worklet)=>{
+      const context=new AudioContext({sampleRate:48000});let node:AudioWorkletNode|undefined;
+      try{await context.resume();await context.audioWorklet.addModule(new URL('./assets/'+worklet,location.href).href);node=new AudioWorkletNode(context,'discorda-denoise',{channelCount:1,channelCountMode:'explicit',outputChannelCount:[1]});return await new Promise<boolean>((resolve)=>{const timer=setTimeout(()=>resolve(false),5000);node!.port.onmessage=e=>{clearTimeout(timer);resolve(e.data?.ready===true);};node!.onprocessorerror=()=>{clearTimeout(timer);resolve(false);};});}finally{node?.port.postMessage('destroy');node?.disconnect();await context.close();}
+    },worklet)).toBe(true);
     await page.getByRole('button', { name: 'Verificar conexão' }).click();
     await expect(page.getByRole('region', { name: 'Conexão com os serviços' }).getByRole('status')).toContainText('Servidor indisponível');
     await page.getByRole('button', { name: 'Entrar com Google' }).click();

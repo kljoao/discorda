@@ -15,6 +15,7 @@ for (const [relative, entry] of Object.entries(lock.packages)) {
   notices.push(`\n=== ${relative} (${entry.version}) — ${entry.license ?? 'see notice'} ===\n`);
   for (const name of licenses) notices.push(await readFile(path.join(directory, name), 'utf8'));
 }
+notices.push(await readFile('resources/AUDIO-THIRD-PARTY-NOTICES.txt','utf8'));
 await writeFile('resources/THIRD-PARTY-LICENSES.txt', notices.join('\n'));
 
 await build({

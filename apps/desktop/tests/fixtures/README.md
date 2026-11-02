@@ -1,0 +1,1 @@
+`speech.wav` is a synthetic speech fixture generated locally with Windows Speech Synthesis, at 48 kHz, mono, PCM16. It contains “Testing clear voice in Discorda. One, two, three.” No microphone recording or personal audio is included. Tests mix it with deterministic synthetic noise to check that suppression preserves speech rather than simply muting the signal.
